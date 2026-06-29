@@ -5,64 +5,46 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>日本旅遊地圖</title>
   <link rel="stylesheet" href="css/style.css">
-  <!-- Tabler Icons -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/3.31.0/webfont/tabler-icons.min.css">
-  <!-- Firebase -->
   <script type="module" src="js/app.js"></script>
 </head>
 <body>
 
-<!-- ── Login Screen ── -->
+<!-- Login -->
 <div id="login-screen">
   <div id="login-box">
-    <div id="login-logo">
-      <i class="ti ti-map-pin"></i>
-    </div>
+    <div id="login-logo"><i class="ti ti-map-pin"></i></div>
     <h1>日本旅遊地圖</h1>
     <p>記錄你走過的每一處</p>
     <div id="login-error" class="hidden"></div>
-    <div class="form-row">
-      <label>電子郵件</label>
-      <input type="email" id="l-email" placeholder="your@email.com" autocomplete="email">
-    </div>
-    <div class="form-row">
-      <label>密碼</label>
-      <input type="password" id="l-password" placeholder="••••••••" autocomplete="current-password">
-    </div>
-    <button id="login-btn" class="btn-primary" onclick="window._auth.login()">登入</button>
+    <div class="form-row"><label>電子郵件</label><input type="email" id="l-email" placeholder="your@email.com" autocomplete="email"></div>
+    <div class="form-row"><label>密碼</label><input type="password" id="l-password" placeholder="••••••••" autocomplete="current-password"></div>
+    <button class="btn-primary" onclick="window._auth.login()">登入</button>
     <div id="login-divider">或</div>
     <button id="google-btn" onclick="window._auth.loginGoogle()">
-      <svg width="16" height="16" viewBox="0 0 48 48" style="margin-right:8px;flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/><path fill="none" d="M0 0h48v48H0z"/></svg>
+      <svg width="16" height="16" viewBox="0 0 48 48" style="margin-right:8px;flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
       使用 Google 帳號登入
     </button>
     <div id="signup-link">還沒有帳號？<span onclick="window._auth.showSignup()">註冊</span></div>
   </div>
 </div>
 
-<!-- ── Signup Screen ── -->
+<!-- Signup -->
 <div id="signup-screen" class="hidden">
   <div id="login-box">
     <div id="login-logo"><i class="ti ti-map-pin"></i></div>
     <h1>建立帳號</h1>
     <p>加入日本旅遊地圖</p>
     <div id="signup-error" class="hidden"></div>
-    <div class="form-row">
-      <label>電子郵件</label>
-      <input type="email" id="s-email" placeholder="your@email.com">
-    </div>
-    <div class="form-row">
-      <label>密碼</label>
-      <input type="password" id="s-password" placeholder="至少 6 個字元">
-    </div>
-    <button id="signup-btn" class="btn-primary" onclick="window._auth.signup()">註冊</button>
+    <div class="form-row"><label>電子郵件</label><input type="email" id="s-email" placeholder="your@email.com"></div>
+    <div class="form-row"><label>密碼</label><input type="password" id="s-password" placeholder="至少 6 個字元"></div>
+    <button class="btn-primary" onclick="window._auth.signup()">註冊</button>
     <div id="signup-link">已有帳號？<span onclick="window._auth.showLogin()">登入</span></div>
   </div>
 </div>
 
-<!-- ── Main App ── -->
+<!-- App -->
 <div id="app" class="hidden">
-
-  <!-- Sidebar -->
   <div id="sidebar">
     <div id="sidebar-inner">
 
@@ -71,28 +53,18 @@
           <h1><i class="ti ti-map-pin"></i>日本旅遊地圖</h1>
           <p id="user-email-display"></p>
         </div>
-        <button id="logout-btn" title="登出" onclick="window._auth.logout()">
-          <i class="ti ti-logout"></i>
-        </button>
+        <button id="logout-btn" title="登出" onclick="window._auth.logout()"><i class="ti ti-logout"></i></button>
       </div>
 
       <div id="import-bar">
-        <button id="import-btn" onclick="openImport()">
-          <i class="ti ti-upload"></i>
-          匯入 Google 時間軸
-        </button>
+        <button id="import-btn" onclick="openImport()"><i class="ti ti-upload"></i>匯入 Google 時間軸</button>
       </div>
 
       <div id="toolbar">
-        <button class="tool-btn active" id="btn-view" onclick="setMode('view')">
-          <i class="ti ti-hand-finger"></i>瀏覽
-        </button>
-        <button class="tool-btn" id="btn-pin" onclick="setMode('pin')">
-          <i class="ti ti-map-pin"></i>新增地點
-        </button>
-        <button class="tool-btn" id="btn-route" onclick="openRouteModal()">
-          <i class="ti ti-route"></i>畫路線
-        </button>
+        <button class="tool-btn active" id="btn-view" onclick="setMode('view')"><i class="ti ti-hand-finger"></i>瀏覽</button>
+        <button class="tool-btn" id="btn-pin" onclick="setMode('pin')"><i class="ti ti-map-pin"></i>新增</button>
+        <button class="tool-btn" id="btn-route" onclick="openRouteModal()"><i class="ti ti-route"></i>路線</button>
+        <button class="tool-btn" id="btn-delete" onclick="setMode('delete')"><i class="ti ti-trash"></i>刪除</button>
       </div>
 
       <div id="tab-bar">
@@ -107,38 +79,37 @@
         <button class="tag-filter" onclick="filterTag(this,'自然')">自然</button>
         <button class="tag-filter" onclick="filterTag(this,'文化')">文化</button>
         <button class="tag-filter" onclick="filterTag(this,'購物')">購物</button>
+        <button class="tag-filter" onclick="filterTag(this,'住宿')">住宿</button>
       </div>
 
-      <div id="content-list">
-        <div class="list-loading"><i class="ti ti-loader-2 spin"></i> 載入中...</div>
+      <!-- Delete mode bar -->
+      <div id="delete-bar" class="hidden">
+        <span id="delete-count">已選 0 項</span>
+        <div style="display:flex;gap:6px;">
+          <button class="btn-secondary" style="padding:4px 10px;font-size:12px;" onclick="setMode('view')">取消</button>
+          <button id="delete-confirm-btn" style="padding:4px 10px;font-size:12px;background:#C0392B;color:#fff;border:none;border-radius:7px;cursor:pointer;" onclick="confirmDelete()">刪除</button>
+        </div>
       </div>
+
+      <div id="content-list"><div class="list-loading"><i class="ti ti-loader-2 spin"></i> 載入中...</div></div>
 
       <div id="stats-bar">
         <div class="stat">地點 <span id="st-places">0</span></div>
         <div class="stat">路線 <span id="st-routes">0</span></div>
         <div class="stat">城市 <span id="st-cities">0</span></div>
       </div>
-
     </div>
-
-    <!-- Collapse button -->
-    <button id="collapse-btn" onclick="toggleSidebar()" aria-label="收合側欄">
-      <i class="ti ti-chevron-left"></i>
-    </button>
+    <button id="collapse-btn" onclick="toggleSidebar()" aria-label="收合側欄"><i class="ti ti-chevron-left"></i></button>
   </div>
 
-  <!-- Map -->
   <div id="map-area">
     <div id="map"></div>
-
     <div id="map-controls">
-      <button class="map-ctrl-btn" onclick="map.setZoom(map.getZoom()+1)" title="放大"><i class="ti ti-plus"></i></button>
-      <button class="map-ctrl-btn" onclick="map.setZoom(map.getZoom()-1)" title="縮小"><i class="ti ti-minus"></i></button>
-      <button class="map-ctrl-btn" style="margin-top:4px;" onclick="map.panTo({lat:36.2,lng:138.5});map.setZoom(5);" title="回日本全圖"><i class="ti ti-current-location"></i></button>
+      <button class="map-ctrl-btn" onclick="map.setZoom(map.getZoom()+1)"><i class="ti ti-plus"></i></button>
+      <button class="map-ctrl-btn" onclick="map.setZoom(map.getZoom()-1)"><i class="ti ti-minus"></i></button>
+      <button class="map-ctrl-btn" style="margin-top:4px;" onclick="map.panTo({lat:36.2,lng:138.5});map.setZoom(5);"><i class="ti ti-current-location"></i></button>
     </div>
-
     <div id="mode-indicator" class="hidden"></div>
-
     <div id="legend">
       <p>交通方式</p>
       <div class="legend-row"><div class="legend-line" style="background:#378ADD;"></div><span>開車 / 公車</span></div>
@@ -146,15 +117,32 @@
       <div class="legend-row"><div class="legend-line" style="background:#D85A30;"></div><span>電車</span></div>
     </div>
   </div>
-
 </div>
 
-<!-- ── Modals ── -->
+<!-- Info Panel -->
+<div id="info-panel" class="hidden">
+  <button id="info-close" onclick="closeInfoPanel()"><i class="ti ti-x"></i></button>
+  <h3 id="info-name"></h3>
+  <div id="info-meta"></div>
+  <div id="info-note" class="note-box"></div>
+  <div class="info-actions">
+    <button onclick="editSelectedPlace()"><i class="ti ti-edit"></i> 編輯</button>
+    <button onclick="deleteSelectedPlace()" class="danger"><i class="ti ti-trash"></i> 刪除</button>
+  </div>
+</div>
 
-<!-- Add/Edit Place -->
+<!-- Add/Edit Place Modal -->
 <div id="add-modal" class="modal-overlay hidden">
   <div class="modal-box">
     <h3 id="modal-title">新增地點</h3>
+    <!-- Search bar -->
+    <div class="form-row" id="search-row">
+      <label>搜尋地點</label>
+      <div style="position:relative;">
+        <input type="text" id="f-search" placeholder="輸入地名或地址搜尋..." autocomplete="off">
+        <div id="search-results" class="hidden"></div>
+      </div>
+    </div>
     <div class="form-row"><label>地點名稱</label><input type="text" id="f-name" placeholder="例：伏見稻荷大社"></div>
     <div class="form-row"><label>城市</label><input type="text" id="f-city" placeholder="例：京都"></div>
     <div class="form-row"><label>分類</label>
@@ -164,6 +152,7 @@
         <option value="自然">自然</option>
         <option value="文化">文化</option>
         <option value="購物">購物</option>
+        <option value="住宿">住宿</option>
       </select>
     </div>
     <div class="form-row"><label>造訪日期</label><input type="date" id="f-date"></div>
@@ -175,40 +164,65 @@
   </div>
 </div>
 
-<!-- Route Transport -->
+<!-- Route Modal -->
 <div id="route-modal" class="modal-overlay hidden">
   <div class="modal-box">
-    <h3>選擇交通方式</h3>
+    <h3>新增路線</h3>
+    <div id="route-tab-bar" style="display:flex;gap:0;margin-bottom:14px;border:0.5px solid #ddd;border-radius:8px;overflow:hidden;">
+      <button id="rtab-auto" onclick="switchRouteTab('auto')" style="flex:1;padding:7px;font-size:12px;border:none;background:#185FA5;color:#fff;cursor:pointer;">自動沿路線</button>
+      <button id="rtab-manual" onclick="switchRouteTab('manual')" style="flex:1;padding:7px;font-size:12px;border:none;background:#fff;color:#555;cursor:pointer;">手動畫路線</button>
+    </div>
+
+    <!-- Auto route -->
+    <div id="route-auto-section">
+      <div class="form-row">
+        <label>起點</label>
+        <div style="position:relative;">
+          <input type="text" id="r-origin" placeholder="輸入起點地址或地名" autocomplete="off">
+          <div id="origin-results" class="hidden search-results-dropdown"></div>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>終點</label>
+        <div style="position:relative;">
+          <input type="text" id="r-dest" placeholder="輸入終點地址或地名" autocomplete="off">
+          <div id="dest-results" class="hidden search-results-dropdown"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual route -->
+    <div id="route-manual-section" class="hidden">
+      <p style="font-size:12px;color:#999;margin-bottom:10px;">選好交通方式後點「開始畫」，在地圖上逐點點擊，雙擊完成。</p>
+    </div>
+
     <div class="transport-option selected" id="t-drive" onclick="selectTransport('drive')">
       <div class="t-swatch" style="background:#378ADD;"></div>
-      <span class="t-label">開車 / 公車</span>
-      <span class="t-desc">藍色</span>
+      <span class="t-label">開車 / 公車</span><span class="t-desc">藍色</span>
     </div>
     <div class="transport-option" id="t-walk" onclick="selectTransport('walk')">
       <div class="t-swatch" style="background:#EF9F27;"></div>
-      <span class="t-label">走路</span>
-      <span class="t-desc">黃色</span>
+      <span class="t-label">走路</span><span class="t-desc">黃色</span>
     </div>
     <div class="transport-option" id="t-train" onclick="selectTransport('train')">
       <div class="t-swatch" style="background:#D85A30;"></div>
-      <span class="t-label">電車</span>
-      <span class="t-desc">橘色</span>
+      <span class="t-label">電車</span><span class="t-desc">橘色</span>
     </div>
+
     <div class="form-row" style="margin-top:12px;"><label>路線名稱</label><input type="text" id="r-name" placeholder="例：嵐山散步路線"></div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeRouteModal()">取消</button>
-      <button class="btn-primary" onclick="startDrawing()">開始畫路線</button>
+      <button class="btn-primary" id="route-action-btn" onclick="handleRouteAction()">搜尋路線</button>
     </div>
   </div>
 </div>
 
-<!-- Import -->
+<!-- Import Modal -->
 <div id="import-overlay" class="modal-overlay hidden">
   <div class="modal-box">
     <h3>匯入 Google 時間軸</h3>
     <p class="import-desc">前往 <strong>myaccount.google.com</strong> → 資料與隱私 → 下載你的資料 → 勾選「位置記錄」。解壓縮後將 <strong>Records.json</strong> 或月份 <strong>.json</strong> 拖入此處。</p>
-    <div id="drop-zone"
-      onclick="document.getElementById('file-input').click()"
+    <div id="drop-zone" onclick="document.getElementById('file-input').click()"
       ondragover="event.preventDefault();this.classList.add('dragover')"
       ondragleave="this.classList.remove('dragover')"
       ondrop="handleDrop(event)">
@@ -225,28 +239,12 @@
   </div>
 </div>
 
-<!-- Place Info Window (custom) -->
-<div id="info-panel" class="hidden">
-  <button id="info-close" onclick="closeInfoPanel()"><i class="ti ti-x"></i></button>
-  <h3 id="info-name"></h3>
-  <div id="info-meta"></div>
-  <div id="info-note" class="note-box"></div>
-  <div class="info-actions">
-    <button onclick="editSelectedPlace()"><i class="ti ti-edit"></i> 編輯</button>
-    <button onclick="deleteSelectedPlace()" class="danger"><i class="ti ti-trash"></i> 刪除</button>
-  </div>
-</div>
-
-<!-- Google Maps API -->
 <script>
   function initMap() {
     window._mapReady = true;
     if (window._onMapReady) window._onMapReady();
   }
 </script>
-<script async defer
-  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAPpRUvXypL46swkyp6E9C4nR2I3UWcUNI&callback=initMap&language=zh-TW">
-</script>
-
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAPpRUvXypL46swkyp6E9C4nR2I3UWcUNI&libraries=places&callback=initMap&language=zh-TW"></script>
 </body>
 </html>
