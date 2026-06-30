@@ -143,6 +143,11 @@ input, select, textarea { font-family: inherit; }
 .year-header.collapsed .chev { transform: rotate(-90deg); }
 .year-count { margin-left: auto; font-size: 11px; color: #aaa; font-weight: 400; }
 .trip-folder { cursor: pointer; }
+.trip-folder.dragging { opacity: 0.4; }
+.trip-folder.drag-over { border-top: 2px solid #185FA5; }
+.drag-handle { width: 14px; height: 14px; color: #ccc; flex-shrink: 0; cursor: grab; }
+.drag-handle:active { cursor: grabbing; }
+.trip-header:hover .drag-handle { color: #999; }
 .trip-header { padding: 8px 14px 8px 28px; display: flex; align-items: center; gap: 7px; cursor: pointer; transition: background 0.1s; }
 .trip-header:hover { background: #fafafa; }
 .trip-header.selected { background: #EBF3FC; }

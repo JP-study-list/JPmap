@@ -91,11 +91,13 @@ const ICON_SVG_PATHS = {
 // Resolve a place's effective icon and color (custom overrides, else category default, else fallback)
 function placeIcon(p) { return p.icon || TAG_DEFAULT_ICON[p.tag] || 'pin'; }
 function placeColor(p) { return p.wishlist ? WISHLIST_COLOR : (p.color || TAG_DEFAULT_COLOR[p.tag] || '#566573'); }
+// Route effective color: custom color if set, else the transport's default color
+function routeColor(r) { return r.color || (TRANSPORT[r.transport] || TRANSPORT.drive).color; }
 
 // Build a Google Maps marker icon (data-URI SVG): colored teardrop pin with white glyph inside.
 function buildMarkerIcon(iconKey, color, scale) {
   const glyph = ICON_SVG_PATHS[iconKey] || ICON_SVG_PATHS.pin;
-  const size = Math.round(scale * 4.2);
+  const size = Math.round(scale * 3.2);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24">
     <circle cx="12" cy="12" r="11" fill="${color}" stroke="#fff" stroke-width="1.5"/>
     <g transform="translate(2.6 2.6) scale(0.78)">${glyph}</g>
@@ -108,9 +110,9 @@ function buildMarkerIcon(iconKey, color, scale) {
 }
 // Marker base scale at zoom 14; scales down/up with zoom level
 const MARKER_BASE_ZOOM = 14;
-const MARKER_BASE_SCALE = 8;
+const MARKER_BASE_SCALE = 7;
 const MARKER_MIN_SCALE = 3;
-const MARKER_MAX_SCALE = 11;
+const MARKER_MAX_SCALE = 9.5;
 
 // ── State ──
 let map, directionsService, directionsRenderer, autocompleteService, placesService;
@@ -130,6 +132,7 @@ let topTransport = 'drive';       // for top search bar route mode
 let routeClickTarget = null;      // pending {lat,lng,label} when picking origin/dest from map in route mode
 let routeOriginCoord = null, routeDestCoord = null;  // precise coords when origin/dest picked from map
 let pendingRoute = null;          // computed route awaiting details-form confirmation
+let pendingRouteColor = '#378ADD';  // selected color in route details modal
 let pendingImport = null;
 let sidebarOpen = true;
 let deleteSelected = new Set();
@@ -535,21 +538,40 @@ function syncRoutePolylines() {
   Object.keys(polylines).forEach(id => { if (!ids.has(id)) { polylines[id].setMap(null); delete polylines[id]; } });
   routes.forEach(r => {
     const t = TRANSPORT[r.transport] || TRANSPORT.drive;
+    const color = routeColor(r);
     const sel = selectedRouteId === r.id;
     if (polylines[r.id]) {
-      polylines[r.id].setOptions({ strokeWeight: sel ? 5 : 3, strokeOpacity: sel ? 1 : 0.75 });
+      polylines[r.id].setOptions({ strokeColor: color, strokeWeight: sel ? 5 : 3, strokeOpacity: sel ? 1 : 0.75 });
       return;
     }
     const path = (r.points || []).map(p => ({ lat: p.lat, lng: p.lng }));
     const poly = new google.maps.Polyline({
       path, map,
-      strokeColor: t.color, strokeWeight: 3, strokeOpacity: 0.75,
+      strokeColor: color, strokeWeight: 3, strokeOpacity: 0.75,
       icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: `${t.dash[0] + t.dash[1]}px` }]
     });
     poly.addListener('click', () => selectRoute(r.id));
+    // Hover tooltip: show route name + transport type
+    poly.addListener('mouseover', (e) => showRouteTooltip(e.latLng, r));
+    poly.addListener('mousemove', (e) => moveRouteTooltip(e.latLng));
+    poly.addListener('mouseout', hideRouteTooltip);
     polylines[r.id] = poly;
   });
 }
+
+// Route hover tooltip (an InfoWindow that follows the cursor)
+let routeTooltip = null;
+function showRouteTooltip(latLng, r) {
+  const t = TRANSPORT[r.transport] || TRANSPORT.drive;
+  if (!routeTooltip) routeTooltip = new google.maps.InfoWindow({ disableAutoPan: true });
+  routeTooltip.setContent(
+    `<div style="font-size:12px;padding:2px 4px;"><b>${esc(r.name)}</b><br>交通方式：${t.label}${r.cat ? '｜' + esc(r.cat) : ''}</div>`
+  );
+  routeTooltip.setPosition(latLng);
+  routeTooltip.open(map);
+}
+function moveRouteTooltip(latLng) { if (routeTooltip) routeTooltip.setPosition(latLng); }
+function hideRouteTooltip() { if (routeTooltip) routeTooltip.close(); }
 
 function clearMap() {
   Object.values(markers).forEach(m => m.setMap(null));
@@ -744,16 +766,17 @@ function placeItemHtml(p) {
 
 function routeItemHtml(r) {
   const t = TRANSPORT[r.transport] || TRANSPORT.drive;
+  const color = routeColor(r);
   const sel = selectedRouteId === r.id;
   const delSel = deleteSelected.has(`route:${r.id}`);
   const catBadge = r.cat ? `<span class="route-cat-badge">${esc(r.cat)}</span>` : '';
   return `<div class="route-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" onclick="selectRoute('${r.id}')">
     ${mode === 'delete' ? `<div class="delete-checkbox${delSel ? ' checked' : ''}"></div>` : ''}
-    <div class="route-swatch" style="background:${t.color};"></div>
+    <div class="route-swatch" style="background:${color};"></div>
     <div class="route-info">
       <div class="route-name">${esc(r.name)}</div>
       <div class="route-meta">${r.date || ''}${r.date ? ' · ' : ''}${(r.points || []).length} 個節點</div>
-      <span class="transport-badge" style="background:${t.color}22;color:${t.color};">${t.label}</span>${catBadge}
+      <span class="transport-badge" style="background:${color}22;color:${color};">${t.label}</span>${catBadge}
     </div>
   </div>`;
 }
@@ -794,7 +817,15 @@ function renderTripsTree() {
     (byYear[y] = byYear[y] || []).push(t);
   });
   const years = Object.keys(byYear).sort((a, b) => b.localeCompare(a));
-  years.forEach(y => byYear[y].sort((a, b) => (b.start || '').localeCompare(a.start || '')));
+  // Within a year, sort by the user's manual order if set, else by start date descending
+  years.forEach(y => byYear[y].sort((a, b) => {
+    const ao = (typeof a.order === 'number') ? a.order : null;
+    const bo = (typeof b.order === 'number') ? b.order : null;
+    if (ao !== null && bo !== null) return ao - bo;
+    if (ao !== null) return -1;
+    if (bo !== null) return 1;
+    return (b.start || '').localeCompare(a.start || '');
+  }));
 
   years.forEach(y => {
     const collapsed = collapsedYears.has(y);
@@ -811,8 +842,13 @@ function renderTripsTree() {
         const tripRoutes = routes.filter(r => r.tripId === t.id);
         const expanded = selectedTripId === t.id;
         const dateStr = t.start ? (t.end && t.end !== t.start ? `${t.start} ~ ${t.end}` : t.start) : '';
-        html += `<div class="trip-folder">
+        html += `<div class="trip-folder" draggable="true" data-trip-id="${t.id}" data-year="${y}"
+            ondragstart="onTripDragStart(event,'${t.id}','${y}')"
+            ondragover="onTripDragOver(event)"
+            ondrop="onTripDrop(event,'${t.id}','${y}')"
+            ondragend="onTripDragEnd(event)">
           <div class="trip-header${expanded ? ' selected' : ''}" onclick="toggleTrip('${t.id}')">
+            <svg class="drag-handle icon" title="拖曳排序"><use href="#icon-grip"/></svg>
             <svg class="trip-folder-icon icon"><use href="#pin-star"/></svg>
             <div style="flex:1;min-width:0;">
               <div class="trip-name">${esc(t.name)}</div>
@@ -866,6 +902,55 @@ window.toggleYear = function(y) {
 window.toggleTrip = function(id) {
   selectedTripId = selectedTripId === id ? null : id;
   renderTripsTree();
+};
+
+// ── Trip drag-to-reorder (within the same year only) ──
+let dragTripId = null, dragTripYear = null;
+window.onTripDragStart = function(e, id, year) {
+  dragTripId = id; dragTripYear = year;
+  e.dataTransfer.effectAllowed = 'move';
+  // Some browsers require data to be set for drag to work
+  try { e.dataTransfer.setData('text/plain', id); } catch (_) {}
+  const folder = e.currentTarget;
+  setTimeout(() => folder.classList.add('dragging'), 0);
+};
+window.onTripDragOver = function(e) {
+  e.preventDefault();  // allow drop
+  e.dataTransfer.dropEffect = 'move';
+  const folder = e.currentTarget;
+  document.querySelectorAll('.trip-folder.drag-over').forEach(el => el.classList.remove('drag-over'));
+  if (folder.dataset.tripId !== dragTripId && folder.dataset.year === dragTripYear) {
+    folder.classList.add('drag-over');
+  }
+};
+window.onTripDrop = async function(e, targetId, year) {
+  e.preventDefault();
+  document.querySelectorAll('.trip-folder.drag-over').forEach(el => el.classList.remove('drag-over'));
+  if (!dragTripId || dragTripId === targetId || year !== dragTripYear) return;
+
+  // Build the current ordered list of trips in this year
+  const yearTrips = trips.filter(t => tripYear(t) === year).sort((a, b) => {
+    const ao = (typeof a.order === 'number') ? a.order : null;
+    const bo = (typeof b.order === 'number') ? b.order : null;
+    if (ao !== null && bo !== null) return ao - bo;
+    if (ao !== null) return -1;
+    if (bo !== null) return 1;
+    return (b.start || '').localeCompare(a.start || '');
+  });
+  const ids = yearTrips.map(t => t.id);
+  const from = ids.indexOf(dragTripId);
+  const to = ids.indexOf(targetId);
+  if (from === -1 || to === -1) return;
+  // Move dragged item to the target position
+  ids.splice(to, 0, ids.splice(from, 1)[0]);
+  // Persist new order (index-based) for every trip in this year
+  await Promise.all(ids.map((id, idx) => updateTrip(id, { order: idx })));
+  dragTripId = null; dragTripYear = null;
+};
+window.onTripDragEnd = function(e) {
+  document.querySelectorAll('.trip-folder.dragging, .trip-folder.drag-over')
+    .forEach(el => el.classList.remove('dragging', 'drag-over'));
+  dragTripId = null; dragTripYear = null;
 };
 
 function renderStats() {
@@ -1085,20 +1170,33 @@ function searchAndSaveRoute(origin, dest, name, transport, triggerBtnId) {
 
     if (status !== google.maps.DirectionsStatus.OK) {
       if (transport === 'train') {
-        const retry = confirm('找不到電車路線。\n\n可能原因：部分日本地區的大眾運輸路線資料不完整，或起訖點離車站較遠。\n\n要改用開車路線替代嗎？（之後可在路線資料裡手動改成電車）');
+        // Translate Google's status into a plain-language reason so the user knows what went wrong
+        let reason;
+        if (status === 'ZERO_RESULTS') {
+          reason = 'Google 沒有這段距離的電車路線資料（這段路線在 Google 大眾運輸資料庫裡查不到，常見於跨區、偏遠或起訖點離車站太遠的情況）。';
+        } else if (status === 'NOT_FOUND') {
+          reason = '起點或終點的地址無法被定位（站名可能拼錯或不夠明確）。建議輸入完整車站名，例如「鎌倉駅」。';
+        } else if (status === 'OVER_QUERY_LIMIT') {
+          reason = '查詢次數過多，請稍候再試。';
+        } else if (status === 'REQUEST_DENIED') {
+          reason = 'Directions API 權限被拒，請確認 API Key 已啟用 Directions API。';
+        } else {
+          reason = `Google 回傳狀態：${status}`;
+        }
+        const retry = confirm(`找不到電車路線。\n\n原因：${reason}\n\n要改用開車路線替代嗎？（存好後可在路線資料裡把交通方式改回電車）`);
         if (retry) {
           directionsService.route(
             { origin, destination: dest, travelMode: google.maps.TravelMode.DRIVING, region: 'jp' },
             async (result2, status2) => {
               if (status2 !== google.maps.DirectionsStatus.OK) {
-                alert('連開車路線也找不到，請確認起點和終點是否正確，或試試輸入完整車站名（例如「鎌倉駅」）。'); return;
+                alert(`連開車路線也找不到（狀態：${status2}）。請確認起點和終點是否正確。`); return;
               }
               await saveRouteFromResult(result2, name, 'drive');
             }
           );
         }
       } else {
-        alert('找不到路線，請確認起點和終點名稱是否正確。\n\n建議：輸入完整車站名，例如「大船駅」、「渋谷駅」');
+        alert(`找不到路線（狀態：${status}）。\n\n建議：輸入完整車站名或地標名稱，例如「大船駅」、「渋谷駅」。`);
       }
       return;
     }
@@ -1145,13 +1243,26 @@ async function saveRouteFromResult(result, name, transport) {
 function openRouteDetailsModal(defaultName) {
   document.getElementById('rd-name').value = defaultName || '';
   document.getElementById('rd-cat').value = ROUTE_CATEGORIES[0];
+  document.getElementById('rd-transport').value = pendingRoute.transport;
   document.getElementById('rd-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('rd-note').value = '';
+  // Default route color = the transport's default color, but user can change it
+  pendingRouteColor = (TRANSPORT[pendingRoute.transport] || TRANSPORT.drive).color;
+  renderRouteColorPicker();
   refreshRouteTripDropdown();
   const rdTrip = document.getElementById('rd-trip');
   if (rdTrip) rdTrip.value = (viewMode === 'trips' && selectedTripId && selectedTripId !== '__wishlist__') ? selectedTripId : '';
   document.getElementById('route-details-modal').classList.remove('hidden');
 }
+
+function renderRouteColorPicker() {
+  const wrap = document.getElementById('rd-color-picker');
+  if (!wrap) return;
+  wrap.innerHTML = COLOR_PALETTE.map(c =>
+    `<div class="color-choice${pendingRouteColor === c ? ' selected' : ''}" style="background:${c};color:${c};" onclick="pickRouteColor('${c}')"></div>`
+  ).join('');
+}
+window.pickRouteColor = function(c) { pendingRouteColor = c; renderRouteColorPicker(); };
 
 window.closeRouteDetailsModal = function() {
   document.getElementById('route-details-modal').classList.add('hidden');
@@ -1164,9 +1275,10 @@ window.saveRouteDetails = async function() {
   const name = document.getElementById('rd-name').value.trim() || pendingRoute.name;
   const data = {
     name,
-    transport: pendingRoute.transport,
+    transport: document.getElementById('rd-transport').value,
     points: pendingRoute.points,
     cat:   document.getElementById('rd-cat').value,
+    color: pendingRouteColor,
     date:  document.getElementById('rd-date').value,
     note:  document.getElementById('rd-note').value.trim(),
     tripId: document.getElementById('rd-trip').value || '',
