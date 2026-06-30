@@ -33,6 +33,7 @@ const TAG_STYLE = {
   '購物': { bg: '#FAECE7', text: '#712B13' },
   '住宿': { bg: '#E8F0FE', text: '#1A3A7A' },
   '交通': { bg: '#FCE8E6', text: '#8C2D1E' },
+  '活動': { bg: '#FDF6D8', text: '#7A5B00' },
 };
 
 // Icon catalog — keys map to SVG symbol ids in index.html (pin-*).
@@ -55,12 +56,12 @@ const ICON_CATALOG = {
 // Default icon per category
 const TAG_DEFAULT_ICON = {
   '美食': 'food', '神社': 'shrine', '自然': 'nature', '文化': 'castle',
-  '購物': 'shopping', '住宿': 'lodging', '交通': 'station',
+  '購物': 'shopping', '住宿': 'lodging', '交通': 'station', '活動': 'star',
 };
 // Default color per category
 const TAG_DEFAULT_COLOR = {
   '美食': '#E8833A', '神社': '#0E8A6E', '自然': '#4C9A2A', '文化': '#6C5CE7',
-  '購物': '#D6336C', '住宿': '#2B7DE9', '交通': '#C0392B',
+  '購物': '#D6336C', '住宿': '#2B7DE9', '交通': '#C0392B', '活動': '#F1B807',
 };
 
 // Color palette for the picker (8-10 common colors)
@@ -119,10 +120,11 @@ let collapsedYears = new Set();  // which year groups are collapsed
 let selectedPlaceId = null, selectedRouteId = null;
 let editingPlaceId = null, pendingLatLng = null;
 let editingTripId = null;        // for trip create/edit modal
+let tripModalReturnToPlace = false;  // after creating a trip from the place modal, reopen place modal
 let pendingIcon = 'food', pendingColor = '#E8833A';  // for the icon/color picker in add/edit modal
-let drawingRoute = null, drawPolyline = null, drawPath = [];
-let pendingTransport = 'drive';   // for manual draw modal
 let topTransport = 'drive';       // for top search bar route mode
+let routeClickTarget = null;      // pending {lat,lng,label} when picking origin/dest from map in route mode
+let routeOriginCoord = null, routeDestCoord = null;  // precise coords when origin/dest picked from map
 let pendingImport = null;
 let sidebarOpen = true;
 let deleteSelected = new Set();
@@ -216,11 +218,23 @@ function initGoogleMap() {
   // New Places API classes are loaded lazily via importLibrary in the search/POI functions.
 
   map.addListener('click', (e) => {
+    // ROUTE MODE: when the search bar is in route mode, clicking the map lets the user
+    // set that point as origin or destination (works on both POIs and blank spots).
+    if (searchMode === 'route') {
+      if (e.placeId) {
+        e.stop();
+        // Fetch the POI's name so the route input shows a readable label
+        handleRoutePointPick(e.latLng, e.placeId);
+      } else {
+        handleRoutePointPick(e.latLng, null);
+      }
+      return;
+    }
+
     // If a built-in POI was clicked, e.placeId is set — show our own info card instead of Google's
     if (e.placeId) {
       e.stop();  // prevent Google's default POI info window
       if (mode === 'pin') {
-        // In pin mode, clicking a POI directly adds it (with its real name)
         handlePoiClick(e.placeId, e.latLng, true);
       } else {
         handlePoiClick(e.placeId, e.latLng, false);
@@ -231,13 +245,7 @@ function initGoogleMap() {
       pendingLatLng = e.latLng;
       editingPlaceId = null;
       openAddModal();
-    } else if (mode === 'draw' && drawingRoute) {
-      addDrawPoint(e.latLng);
     }
-  });
-
-  map.addListener('dblclick', () => {
-    if (mode === 'draw' && drawingRoute) finishDrawing();
   });
 
   // Rescale markers as zoom changes
@@ -293,6 +301,51 @@ window.addPoiToMap = function() {
   closePoiCard();
 };
 
+// ── Route-mode map click: pick this point as origin or destination ──
+// Shows a small popup at screen position with two choices.
+async function handleRoutePointPick(latLng, placeId) {
+  let label;
+  if (placeId) {
+    // Resolve POI name via new Places API
+    try {
+      const { Place } = await google.maps.importLibrary('places');
+      const place = new Place({ id: placeId });
+      await place.fetchFields({ fields: ['displayName', 'location'] });
+      label = place.displayName || '選定地點';
+    } catch {
+      label = '選定地點';
+    }
+  } else {
+    label = `座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`;
+  }
+  routeClickTarget = { lat: latLng.lat(), lng: latLng.lng(), label };
+  showRoutePointMenu(latLng);
+}
+
+function showRoutePointMenu(latLng) {
+  const menu = document.getElementById('route-point-menu');
+  if (!menu) return;
+  document.getElementById('rpm-label').textContent = routeClickTarget.label;
+  menu.classList.remove('hidden');
+}
+
+window.setRoutePoint = function(which) {
+  if (!routeClickTarget) return;
+  // Make sure the search bar is in route mode and visible
+  setSearchMode('route');
+  const input = document.getElementById(which === 'origin' ? 'top-r-origin' : 'top-r-dest');
+  if (input) input.value = routeClickTarget.label;
+  // Store the actual coordinates so route search can use them precisely
+  if (which === 'origin') routeOriginCoord = { lat: routeClickTarget.lat, lng: routeClickTarget.lng };
+  else routeDestCoord = { lat: routeClickTarget.lat, lng: routeClickTarget.lng };
+  closeRoutePointMenu();
+};
+
+window.closeRoutePointMenu = function() {
+  document.getElementById('route-point-menu').classList.add('hidden');
+  routeClickTarget = null;
+};
+
 function markerScaleForZoom() {
   const zoom = map.getZoom() || MARKER_BASE_ZOOM;
   const diff = zoom - MARKER_BASE_ZOOM;
@@ -331,6 +384,9 @@ function setupAutocompleteInput(inputId, resultsId, onPredictionSelected, textOn
   let t;
   input.addEventListener('input', () => {
     clearTimeout(t);
+    // If the user manually edits a route input, drop any map-picked coordinate for that field
+    if (inputId === 'top-r-origin') routeOriginCoord = null;
+    if (inputId === 'top-r-dest') routeDestCoord = null;
     const val = input.value.trim();
     if (!val) { results.classList.add('hidden'); return; }
     t = setTimeout(() => fetchSuggestions(val, results, input, onPredictionSelected, textOnly), 280);
@@ -403,10 +459,13 @@ window.selectTopTransport = function(t) {
 };
 
 window.topSearchRoute = function() {
-  const origin = document.getElementById('top-r-origin').value.trim();
-  const dest   = document.getElementById('top-r-dest').value.trim();
-  if (!origin || !dest) { alert('請輸入起點和終點'); return; }
-  const name = `${origin} → ${dest}`;
+  const originText = document.getElementById('top-r-origin').value.trim();
+  const destText   = document.getElementById('top-r-dest').value.trim();
+  if (!originText || !destText) { alert('請輸入起點和終點'); return; }
+  // Use precise coordinates if the point was picked from the map, else use the typed text
+  const origin = routeOriginCoord || originText;
+  const dest   = routeDestCoord || destText;
+  const name = `${originText} → ${destText}`;
   searchAndSaveRoute(origin, dest, name, topTransport, 'top-route-go');
 };
 
@@ -589,7 +648,6 @@ window.setMode = function(m) {
     const b = document.getElementById('btn-' + x);
     if (b) b.classList.toggle('active', x === m);
   });
-  document.getElementById('btn-route').classList.toggle('active', m === 'draw');
   const delBtn = document.getElementById('btn-delete');
   if (delBtn) delBtn.classList.toggle('delete-mode', m === 'delete');
   const delBar = document.getElementById('delete-bar');
@@ -597,10 +655,9 @@ window.setMode = function(m) {
   document.getElementById('delete-count').textContent = '已選 0 項';
   const ind = document.getElementById('mode-indicator');
   if (m === 'pin') { ind.textContent = '點擊地圖新增地點'; ind.classList.remove('hidden'); }
-  else if (m === 'draw') { ind.textContent = '點擊畫點 — 雙擊完成'; ind.classList.remove('hidden'); }
   else if (m === 'delete') { ind.textContent = '點擊地點或路線來選取'; ind.classList.remove('hidden'); }
   else { ind.classList.add('hidden'); }
-  if (map) map.setOptions({ draggableCursor: (m === 'pin' || m === 'draw') ? 'crosshair' : '' });
+  if (map) map.setOptions({ draggableCursor: (m === 'pin') ? 'crosshair' : '' });
   renderList();
 };
 
@@ -792,19 +849,28 @@ function renderStats() {
 // ══════════════════════════════════════
 // Trips
 // ══════════════════════════════════════
-// Populate the trip <select> dropdowns in place/route modals
+// Populate the trip <select> dropdowns in place modal
 function refreshTripDropdowns() {
   const sorted = [...trips].sort((a, b) => (b.start || '').localeCompare(a.start || ''));
   const opts = '<option value="">未分類</option>' +
-    sorted.map(t => `<option value="${t.id}">${esc(t.name)}${t.start ? ' (' + t.start + ')' : ''}</option>`).join('');
+    sorted.map(t => `<option value="${t.id}">${esc(t.name)}${t.start ? ' (' + t.start + ')' : ''}</option>`).join('') +
+    '<option value="__new__">＋ 新增行程…</option>';
   const fTrip = document.getElementById('f-trip');
-  const rTrip = document.getElementById('r-trip');
   if (fTrip) { const v = fTrip.value; fTrip.innerHTML = opts; fTrip.value = v; }
-  if (rTrip) { const v = rTrip.value; rTrip.innerHTML = opts; rTrip.value = v; }
 }
 
-window.openTripModal = function() {
+// When the place's trip dropdown changes to "新增行程", open the trip modal
+window.onTripSelectChange = function() {
+  const fTrip = document.getElementById('f-trip');
+  if (fTrip && fTrip.value === '__new__') {
+    fTrip.value = '';  // reset selection
+    openTripModal(true);  // open in "return to place modal" mode
+  }
+};
+
+window.openTripModal = function(returnToPlace) {
   editingTripId = null; window._editingTripId = null;
+  tripModalReturnToPlace = !!returnToPlace;  // if true, after saving, reopen place modal with new trip selected
   document.getElementById('trip-modal-title').textContent = '新增行程';
   document.getElementById('tp-name').value = '';
   document.getElementById('tp-start').value = '';
@@ -818,6 +884,7 @@ window.editTrip = function(id) {
   const t = trips.find(x => x.id === id);
   if (!t) return;
   editingTripId = id; window._editingTripId = id;
+  tripModalReturnToPlace = false;
   document.getElementById('trip-modal-title').textContent = '編輯行程';
   document.getElementById('tp-name').value = t.name || '';
   document.getElementById('tp-start').value = t.start || '';
@@ -829,6 +896,7 @@ window.editTrip = function(id) {
 window.closeTripModal = function() {
   document.getElementById('trip-modal').classList.add('hidden');
   editingTripId = null; window._editingTripId = null;
+  tripModalReturnToPlace = false;
 };
 
 window.saveTrip = async function() {
@@ -838,13 +906,22 @@ window.saveTrip = async function() {
   const end = document.getElementById('tp-end').value;
   // If only one date given, mirror it so the trip still has a year
   const data = { name, start: start || end || '', end: end || start || '' };
+  let newId = null;
   if (editingTripId) {
     await updateTrip(editingTripId, data);
   } else {
     const ref = await addTrip(data);
+    newId = ref.id;
     selectedTripId = ref.id;  // expand the newly created trip
   }
+  const returnToPlace = tripModalReturnToPlace;
   closeTripModal();
+  // If this trip was created from within the place modal, reopen it and select the new trip
+  if (returnToPlace && newId) {
+    document.getElementById('add-modal').classList.remove('hidden');
+    refreshTripDropdowns();
+    document.getElementById('f-trip').value = newId;
+  }
 };
 
 // Delete a trip — its places/routes become unfiled (tripId cleared), not deleted
@@ -947,59 +1024,6 @@ window.openSettings = function() { document.getElementById('settings-overlay').c
 window.closeSettings = function() { document.getElementById('settings-overlay').classList.add('hidden'); };
 
 // ══════════════════════════════════════
-// Manual Route Drawing Modal
-// ══════════════════════════════════════
-window.openRouteModal = function() {
-  pendingTransport = 'drive';
-  document.querySelectorAll('.transport-option').forEach(el => el.classList.remove('selected'));
-  document.getElementById('t-drive').classList.add('selected');
-  document.getElementById('r-name').value = '';
-  refreshTripDropdowns();
-  const rTrip = document.getElementById('r-trip');
-  if (rTrip) rTrip.value = (viewMode === 'trips' && selectedTripId) ? selectedTripId : '';
-  document.getElementById('route-modal').classList.remove('hidden');
-};
-
-window.selectTransport = function(t) {
-  pendingTransport = t;
-  document.querySelectorAll('.transport-option').forEach(el => el.classList.remove('selected'));
-  document.getElementById('t-' + t).classList.add('selected');
-};
-
-window.closeRouteModal = function() { document.getElementById('route-modal').classList.add('hidden'); };
-
-function startDrawing() {
-  const name = document.getElementById('r-name').value.trim() || '未命名路線';
-  const tripId = document.getElementById('r-trip').value || '';
-  drawingRoute = { name, transport: pendingTransport, tripId };
-  drawPath = [];
-  if (drawPolyline) { drawPolyline.setMap(null); drawPolyline = null; }
-  closeRouteModal();
-  setMode('draw');
-  const t = TRANSPORT[pendingTransport];
-  drawPolyline = new google.maps.Polyline({
-    path: [], map,
-    strokeColor: t.color, strokeWeight: 3, strokeOpacity: 0.6,
-    icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: `${t.dash[0] + t.dash[1]}px` }]
-  });
-}
-
-function addDrawPoint(latLng) {
-  drawPath.push({ lat: latLng.lat(), lng: latLng.lng() });
-  drawPolyline.setPath(drawPath.map(p => ({ lat: p.lat, lng: p.lng })));
-}
-
-async function finishDrawing() {
-  if (drawPath.length >= 2 && drawingRoute) {
-    await addRoute({ name: drawingRoute.name, transport: drawingRoute.transport, points: drawPath, tripId: drawingRoute.tripId || '' });
-  }
-  if (drawPolyline) { drawPolyline.setMap(null); drawPolyline = null; }
-  drawPath = []; drawingRoute = null;
-  setMode('view');
-  if (viewMode === 'all' && activeTab !== 'routes') switchTab('routes');
-}
-
-// ══════════════════════════════════════
 // Auto Route (Directions API) — used by top search bar
 // ══════════════════════════════════════
 function searchAndSaveRoute(origin, dest, name, transport, triggerBtnId) {
@@ -1047,6 +1071,7 @@ function searchAndSaveRoute(origin, dest, name, transport, triggerBtnId) {
 function clearTopRouteInputs() {
   document.getElementById('top-r-origin').value = '';
   document.getElementById('top-r-dest').value = '';
+  routeOriginCoord = null; routeDestCoord = null;
 }
 
 async function saveRouteFromResult(result, name, transport) {
@@ -1176,7 +1201,6 @@ window.recenterMap = function() { if (map) { map.panTo({ lat: 36.2, lng: 138.5 }
 // ── Expose globals ──
 window.selectPlace = selectPlace;
 window.selectRoute = selectRoute;
-window.startDrawing = startDrawing;
 
 function esc(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');

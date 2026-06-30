@@ -6,6 +6,17 @@ input, select, textarea { font-family: inherit; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* Route Point Picker popup */
+#route-point-menu { position: absolute; top: 80px; left: 50%; transform: translateX(-50%); z-index: 30; background: #fff; border-radius: 12px; padding: 14px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); width: 240px; }
+.rpm-label-row { font-size: 13px; font-weight: 500; color: #1a1a1a; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 0.5px solid #eee; word-break: break-all; }
+.rpm-btn { width: 100%; padding: 9px; margin-bottom: 6px; border: 0.5px solid #ddd; border-radius: 8px; background: #fff; font-size: 13px; color: #333; display: flex; align-items: center; gap: 8px; transition: background 0.15s; }
+.rpm-btn:hover { background: #f5f5f5; }
+.rpm-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.rpm-dot.origin-dot { background: #378ADD; }
+.rpm-dot.dest-dot { background: #D85A30; }
+.rpm-cancel { width: 100%; padding: 7px; margin-top: 2px; border: none; background: none; font-size: 12px; color: #999; }
+.rpm-cancel:hover { color: #555; }
+
 /* POI Info Card (Google Maps style) */
 #poi-card { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 30; width: 280px; background: #fff; border-radius: 12px; padding: 18px; box-shadow: 0 6px 28px rgba(0,0,0,0.2); }
 #poi-card-close { position: absolute; top: 12px; right: 12px; background: none; border: none; color: #999; padding: 2px; border-radius: 5px; display: flex; }
