@@ -93,6 +93,13 @@ function placeIcon(p) { return p.icon || TAG_DEFAULT_ICON[p.tag] || 'pin'; }
 function placeColor(p) { return p.wishlist ? WISHLIST_COLOR : (p.color || TAG_DEFAULT_COLOR[p.tag] || '#566573'); }
 // Route effective color: custom color if set, else the transport's default color
 function routeColor(r) { return r.color || (TRANSPORT[r.transport] || TRANSPORT.drive).color; }
+// Sort by manual `order` field; items without order keep original (createdAt) order after ordered ones
+function byOrder(a, b) {
+  const ao = (typeof a.order === 'number') ? a.order : Infinity;
+  const bo = (typeof b.order === 'number') ? b.order : Infinity;
+  if (ao !== bo) return ao - bo;
+  return (a.createdAt || 0) - (b.createdAt || 0);
+}
 
 // Build a Google Maps marker icon (data-URI SVG): colored teardrop pin with white glyph inside.
 function buildMarkerIcon(iconKey, color, scale) {
@@ -134,6 +141,7 @@ let routeOriginCoord = null, routeDestCoord = null;  // precise coords when orig
 let pendingRoute = null;          // computed route awaiting details-form confirmation
 let pendingRouteColor = '#378ADD';  // selected color in route details modal
 let editingRouteId = null;        // set when editing an existing route via the details modal
+let routesHidden = false;         // when true, all route polylines are hidden on the map
 let pendingImport = null;
 let sidebarOpen = true;
 let deleteSelected = new Set();
@@ -525,12 +533,14 @@ function subscribeData() {
   const pq = query(collection(db, 'places'), where('uid', '==', uid));
   unsubscribePlaces = onSnapshot(pq, (snap) => {
     places = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    places.sort(byOrder);
     syncPlaceMarkers();
     renderList();
   });
   const rq = query(collection(db, 'routes'), where('uid', '==', uid));
   unsubscribeRoutes = onSnapshot(rq, (snap) => {
     routes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    routes.sort(byOrder);
     syncRoutePolylines();
     renderList();
   });
@@ -580,13 +590,15 @@ function syncRoutePolylines() {
     const t = TRANSPORT[r.transport] || TRANSPORT.drive;
     const color = routeColor(r);
     const sel = selectedRouteId === r.id;
+    const targetMap = routesHidden ? null : map;
     if (polylines[r.id]) {
+      polylines[r.id].setMap(targetMap);
       polylines[r.id].setOptions({ strokeColor: color, strokeWeight: sel ? 5 : 3, strokeOpacity: sel ? 1 : 0.75 });
       return;
     }
     const path = (r.points || []).map(p => ({ lat: p.lat, lng: p.lng }));
     const poly = new google.maps.Polyline({
-      path, map,
+      path, map: targetMap,
       strokeColor: color, strokeWeight: 3, strokeOpacity: 0.75,
       icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: `${t.dash[0] + t.dash[1]}px` }]
     });
@@ -598,6 +610,12 @@ function syncRoutePolylines() {
     polylines[r.id] = poly;
   });
 }
+
+window.toggleHideRoutes = function() {
+  routesHidden = !routesHidden;
+  document.getElementById('btn-hide-routes').classList.toggle('routes-off', routesHidden);
+  syncRoutePolylines();
+};
 
 // Route hover tooltip (an InfoWindow that follows the cursor)
 let routeTooltip = null;
@@ -780,19 +798,20 @@ function renderList() {
     if (f.length === 0) {
       list.innerHTML = '<div class="list-empty">尚無地點記錄<br>用上方搜尋列或「新增」按鈕加入地點</div>';
     } else {
-      list.innerHTML = f.map(p => placeItemHtml(p)).join('');
+      // Drag reorder only makes sense on the unfiltered full list
+      list.innerHTML = f.map(p => placeItemHtml(p, currentFilter === '全部' ? 'all' : null)).join('');
     }
   } else {
     if (routes.length === 0) {
       list.innerHTML = '<div class="list-empty">尚無路線記錄<br>用上方搜尋列規劃路線，或手動畫路線</div>';
     } else {
-      list.innerHTML = routes.map(r => routeItemHtml(r)).join('');
+      list.innerHTML = routes.map(r => routeItemHtml(r, 'all')).join('');
     }
   }
   renderStats();
 }
 
-function placeItemHtml(p) {
+function placeItemHtml(p, scope) {
   const sel = selectedPlaceId === p.id;
   const delSel = deleteSelected.has(`place:${p.id}`);
   const color = placeColor(p);
@@ -803,7 +822,10 @@ function placeItemHtml(p) {
     `<button class="fav-btn${fav ? ' active' : ''}" title="${fav ? '取消收藏' : '加入我的最愛'}" onclick="event.stopPropagation();toggleFavorite('${p.id}')">
       <svg class="icon"><use href="#icon-heart-${fav ? 'filled' : 'outline'}"/></svg>
     </button>`;
-  return `<div class="place-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" onclick="selectPlace('${p.id}')">
+  const dragAttrs = mode === 'delete' ? '' :
+    `draggable="true" data-item-kind="place" data-item-id="${p.id}" data-scope="${scope || 'all'}"
+     ondragstart="onItemDragStart(event)" ondragover="onItemDragOver(event)" ondrop="onItemDrop(event)" ondragend="onItemDragEnd(event)"`;
+  return `<div class="place-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" ${dragAttrs} onclick="selectPlace('${p.id}')">
     ${mode === 'delete' ? `<div class="delete-checkbox${delSel ? ' checked' : ''}"></div>` : ''}
     ${heart}
     <div class="place-icon" style="background:${color};"><svg class="icon" style="color:#fff;"><use href="#pin-${iconKey}"/></svg></div>
@@ -848,7 +870,7 @@ window.editRoute = function(id) {
   document.getElementById('route-details-modal').classList.remove('hidden');
 };
 
-function routeItemHtml(r) {
+function routeItemHtml(r, scope) {
   const t = TRANSPORT[r.transport] || TRANSPORT.drive;
   const color = routeColor(r);
   const sel = selectedRouteId === r.id;
@@ -862,7 +884,10 @@ function routeItemHtml(r) {
     </button>`;
   const editBtn = mode === 'delete' ? '' :
     `<button class="route-edit-btn" title="編輯路線" onclick="event.stopPropagation();editRoute('${r.id}')"><svg class="icon"><use href="#icon-edit"/></svg></button>`;
-  return `<div class="route-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" onclick="selectRoute('${r.id}')">
+  const dragAttrs = mode === 'delete' ? '' :
+    `draggable="true" data-item-kind="route" data-item-id="${r.id}" data-scope="${scope || 'all'}"
+     ondragstart="onItemDragStart(event)" ondragover="onItemDragOver(event)" ondrop="onItemDrop(event)" ondragend="onItemDragEnd(event)"`;
+  return `<div class="route-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" ${dragAttrs} onclick="selectRoute('${r.id}')">
     ${mode === 'delete' ? `<div class="delete-checkbox${delSel ? ' checked' : ''}"></div>` : ''}
     ${heart}
     <div class="route-swatch" style="background:${color};"></div>
@@ -900,7 +925,7 @@ function renderTripsTree() {
         <span class="year-count">${favPlaces.length} 個</span>
       </div>`;
     if (!collapsed) {
-      html += favPlaces.map(p => placeItemHtml(p)).join('');
+      html += favPlaces.map(p => placeItemHtml(p, 'favorite')).join('');
     }
     html += `</div>`;
   }
@@ -916,7 +941,7 @@ function renderTripsTree() {
         <span class="year-count">${wishPlaces.length} 個</span>
       </div>`;
     if (!collapsed) {
-      html += wishPlaces.map(p => placeItemHtml(p)).join('');
+      html += wishPlaces.map(p => placeItemHtml(p, 'wishlist')).join('');
     }
     html += `</div>`;
   }
@@ -972,8 +997,8 @@ function renderTripsTree() {
           if (tripPlaces.length === 0 && tripRoutes.length === 0) {
             html += '<div class="list-empty" style="padding:10px 14px;">此行程尚無地點或路線</div>';
           } else {
-            html += tripPlaces.map(p => placeItemHtml(p)).join('');
-            html += tripRoutes.map(r => routeItemHtml(r)).join('');
+            html += tripPlaces.map(p => placeItemHtml(p, 'trip:'+t.id)).join('');
+            html += tripRoutes.map(r => routeItemHtml(r, 'trip:'+t.id)).join('');
           }
           html += '</div>';
         }
@@ -995,8 +1020,8 @@ function renderTripsTree() {
         <span class="year-count">${unfiledPlaces.length + unfiledRoutes.length} 項</span>
       </div>`;
     if (!collapsed) {
-      html += unfiledPlaces.map(p => placeItemHtml(p)).join('');
-      html += unfiledRoutes.map(r => routeItemHtml(r)).join('');
+      html += unfiledPlaces.map(p => placeItemHtml(p, 'unfiled')).join('');
+      html += unfiledRoutes.map(r => routeItemHtml(r, 'unfiled')).join('');
     }
     html += `</div>`;
   }
@@ -1063,6 +1088,64 @@ window.onTripDragEnd = function(e) {
     .forEach(el => el.classList.remove('dragging', 'drag-over'));
   dragTripId = null; dragTripYear = null;
 };
+
+// ── Generic place/route list item drag-to-reorder ──
+// Reorders within the same kind (place|route) and scope; persists `order` on each.
+let dragItem = null;  // { kind, id, scope }
+window.onItemDragStart = function(e) {
+  const el = e.currentTarget;
+  dragItem = { kind: el.dataset.itemKind, id: el.dataset.itemId, scope: el.dataset.scope };
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', dragItem.id); } catch (_) {}
+  setTimeout(() => el.classList.add('dragging'), 0);
+};
+window.onItemDragOver = function(e) {
+  if (!dragItem) return;
+  const el = e.currentTarget;
+  // Only allow dropping onto same kind + same scope
+  if (el.dataset.itemKind !== dragItem.kind || el.dataset.scope !== dragItem.scope) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('.place-item.drag-over, .route-item.drag-over').forEach(x => x.classList.remove('drag-over'));
+  if (el.dataset.itemId !== dragItem.id) el.classList.add('drag-over');
+};
+window.onItemDrop = async function(e) {
+  if (!dragItem) return;
+  const el = e.currentTarget;
+  if (el.dataset.itemKind !== dragItem.kind || el.dataset.scope !== dragItem.scope) return;
+  e.preventDefault();
+  document.querySelectorAll('.place-item.drag-over, .route-item.drag-over').forEach(x => x.classList.remove('drag-over'));
+  const targetId = el.dataset.itemId;
+  if (targetId === dragItem.id) return;
+  await reorderItems(dragItem.kind, dragItem.scope, dragItem.id, targetId);
+  dragItem = null;
+};
+window.onItemDragEnd = function(e) {
+  document.querySelectorAll('.dragging, .drag-over').forEach(x => x.classList.remove('dragging', 'drag-over'));
+  dragItem = null;
+};
+
+// Build the ordered id-list for a kind+scope, move dragged before target, persist order
+async function reorderItems(kind, scope, dragId, targetId) {
+  const arr = kind === 'place' ? places : routes;
+  const update = kind === 'place' ? updatePlace : updateRoute;
+  // Determine which items belong to this scope
+  const inScope = (item) => {
+    if (scope === 'all') return true;
+    if (scope === 'wishlist') return !!item.wishlist;
+    if (scope === 'favorite') return !!item.favorite;
+    if (scope === 'unfiled') return !item.tripId && !item.wishlist;
+    if (scope.startsWith('trip:')) return item.tripId === scope.slice(5) && !item.wishlist;
+    return true;
+  };
+  const scoped = arr.filter(inScope).slice().sort(byOrder);
+  const ids = scoped.map(x => x.id);
+  const from = ids.indexOf(dragId);
+  const to = ids.indexOf(targetId);
+  if (from === -1 || to === -1) return;
+  ids.splice(to, 0, ids.splice(from, 1)[0]);
+  await Promise.all(ids.map((id, idx) => update(id, { order: idx })));
+}
 
 function renderStats() {
   document.getElementById('st-places').textContent = places.length;
@@ -1266,6 +1349,70 @@ window.openStats = function() {
   document.getElementById('stats-overlay').classList.remove('hidden');
 };
 window.closeStats = function() { document.getElementById('stats-overlay').classList.add('hidden'); };
+
+// ── Export / Import (JSON backup) ──
+window.exportData = function() {
+  const strip = (o) => { const { id, uid, ...rest } = o; return rest; };
+  const data = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    places: places.map(strip),
+    routes: routes.map(strip),
+    trips: trips.map(strip),
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `jpmap-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+};
+
+window.importData = async function(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = '';  // reset so the same file can be re-selected later
+  if (!file) return;
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    alert('檔案格式錯誤，無法解析 JSON。'); return;
+  }
+  const nP = (data.places || []).length, nR = (data.routes || []).length, nT = (data.trips || []).length;
+  if (!confirm(`即將匯入：${nP} 個地點、${nR} 條路線、${nT} 個行程。\n\n這些會「新增」到你現有的資料裡（不會覆蓋或刪除現有資料）。要繼續嗎？`)) return;
+
+  try {
+    // Trips first, remapping old trip ids → new ids so places/routes keep their grouping
+    const tripIdMap = {};
+    for (const t of (data.trips || [])) {
+      const { id: oldId, ...rest } = t;
+      const ref = await addTrip(stripUndefined(rest));
+      if (oldId) tripIdMap[oldId] = ref.id;
+    }
+    for (const p of (data.places || [])) {
+      const { id, ...rest } = p;
+      if (rest.tripId && tripIdMap[rest.tripId]) rest.tripId = tripIdMap[rest.tripId];
+      await addPlace(stripUndefined(rest));
+    }
+    for (const r of (data.routes || [])) {
+      const { id, ...rest } = r;
+      if (rest.tripId && tripIdMap[rest.tripId]) rest.tripId = tripIdMap[rest.tripId];
+      await addRoute(stripUndefined(rest));
+    }
+    alert('匯入完成！');
+    closeSettings();
+  } catch (err) {
+    alert('匯入過程發生錯誤：' + (err && err.message ? err.message : err));
+  }
+};
+
+// Firestore rejects undefined values; drop them
+function stripUndefined(obj) {
+  const out = {};
+  Object.keys(obj).forEach(k => { if (obj[k] !== undefined) out[k] = obj[k]; });
+  return out;
+}
 
 function renderStatsContent() {
   const visited = places.filter(p => !p.wishlist);

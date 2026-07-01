@@ -188,6 +188,9 @@ input, select, textarea { font-family: inherit; }
 #info-photo.hidden { display: none; }
 .route-edit-btn { background: none; border: none; color: #ccc; padding: 2px 4px; border-radius: 5px; display: flex; flex-shrink: 0; align-self: center; cursor: pointer; }
 .route-edit-btn:hover { color: #555; background: #eee; }
+.place-item.dragging, .route-item.dragging { opacity: 0.4; }
+#btn-hide-routes.routes-off { opacity: 0.45; text-decoration: line-through; }
+.place-item.drag-over, .route-item.drag-over { border-top: 2px solid #185FA5; }
 .route-edit-btn .icon { width: 15px; height: 15px; }
 /* Stats */
 .stat-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
@@ -306,3 +309,44 @@ input, select, textarea { font-family: inherit; }
 #import-result { font-size: 12px; padding: 9px 11px; border-radius: 8px; margin-bottom: 12px; }
 #import-result.success { background: #EAF3DE; color: #27500A; }
 #import-result.error { background: #FCEBEB; color: #791F1F; }
+
+/* ─────────── Mobile optimization ─────────── */
+@media (max-width: 640px) {
+  /* Sidebar becomes a slide-out drawer over the map */
+  #sidebar { position: absolute; top: 0; left: 0; height: 100%; width: 86%; min-width: 0; max-width: 340px; box-shadow: 2px 0 16px rgba(0,0,0,0.18); z-index: 40; }
+  #sidebar.collapsed { width: 0; min-width: 0; box-shadow: none; }
+  #sidebar-inner { width: 100%; }
+  #map-area { width: 100%; }
+  #map { width: 100%; }
+
+  /* Reopen button larger tap target */
+  #reopen-btn { width: 40px; height: 40px; top: 10px; left: 10px; }
+  #reopen-btn .icon { width: 20px; height: 20px; }
+
+  /* Top search bar: narrower, offset for reopen button */
+  #search-bar { left: 60px !important; right: 10px; width: auto; max-width: none; }
+  #map-area:has(#reopen-btn:not(.hidden)) #search-bar { left: 60px; }
+
+  /* Modals fill most of the screen */
+  .modal-box { width: 92vw !important; max-width: 92vw !important; max-height: 88vh; overflow-y: auto; }
+
+  /* Info panel + POI card as bottom sheets */
+  #info-panel { left: 8px; right: 8px; bottom: 8px; top: auto; width: auto; max-height: 55vh; overflow-y: auto; }
+  #poi-card { left: 8px; right: 8px; bottom: 8px; top: auto; width: auto; }
+
+  /* Route alternatives panel: bottom sheet instead of top-right */
+  #route-alt-modal { left: 8px; right: 8px; bottom: 8px; top: auto; width: auto; }
+
+  /* Route point menu centered lower */
+  #route-point-menu { width: 78%; }
+
+  /* Stats cards 2 columns */
+  .stat-cards { grid-template-columns: repeat(2, 1fr); }
+
+  /* Larger tap targets in lists */
+  .place-item, .route-item { padding-top: 11px; padding-bottom: 11px; }
+  .fav-btn .icon { width: 20px; height: 20px; }
+
+  /* Zoom controls & recenter shifted so they don't overlap bottom sheets */
+  #manual-draw-bar { bottom: 16px; }
+}
