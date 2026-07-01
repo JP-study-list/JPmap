@@ -226,6 +226,13 @@ function initGoogleMap() {
   // New Places API classes are loaded lazily via importLibrary in the search/POI functions.
 
   map.addListener('click', (e) => {
+    // MANUAL DRAW MODE (train fallback): each click adds a point along the track
+    if (manualDraw) {
+      if (e.placeId) e.stop();
+      addManualDrawPoint(e.latLng);
+      return;
+    }
+
     // ROUTE MODE: when the search bar is in route mode, clicking the map lets the user
     // set that point as origin or destination (works on both POIs and blank spots).
     if (searchMode === 'route') {
@@ -254,6 +261,11 @@ function initGoogleMap() {
       editingPlaceId = null;
       openAddModal();
     }
+  });
+
+  // Double-click finishes a manual draw
+  map.addListener('dblclick', (e) => {
+    if (manualDraw) { e.stop(); window.finishManualDraw(); }
   });
 
   // Rescale markers as zoom changes
@@ -564,8 +576,9 @@ let routeTooltip = null;
 function showRouteTooltip(latLng, r) {
   const t = TRANSPORT[r.transport] || TRANSPORT.drive;
   if (!routeTooltip) routeTooltip = new google.maps.InfoWindow({ disableAutoPan: true });
+  const fareStr = r.fare ? `｜¥${esc(String(r.fare))}` : '';
   routeTooltip.setContent(
-    `<div style="font-size:12px;padding:2px 4px;"><b>${esc(r.name)}</b><br>交通方式：${t.label}${r.cat ? '｜' + esc(r.cat) : ''}</div>`
+    `<div style="font-size:12px;padding:2px 4px;"><b>${esc(r.name)}</b><br>交通方式：${t.label}${r.cat ? '｜' + esc(r.cat) : ''}${fareStr}</div>`
   );
   routeTooltip.setPosition(latLng);
   routeTooltip.open(map);
@@ -770,12 +783,13 @@ function routeItemHtml(r) {
   const sel = selectedRouteId === r.id;
   const delSel = deleteSelected.has(`route:${r.id}`);
   const catBadge = r.cat ? `<span class="route-cat-badge">${esc(r.cat)}</span>` : '';
+  const fareStr = r.fare ? ` · ¥${esc(String(r.fare))}` : '';
   return `<div class="route-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" onclick="selectRoute('${r.id}')">
     ${mode === 'delete' ? `<div class="delete-checkbox${delSel ? ' checked' : ''}"></div>` : ''}
     <div class="route-swatch" style="background:${color};"></div>
     <div class="route-info">
       <div class="route-name">${esc(r.name)}</div>
-      <div class="route-meta">${r.date || ''}${r.date ? ' · ' : ''}${(r.points || []).length} 個節點</div>
+      <div class="route-meta">${r.date || ''}${r.date ? ' · ' : ''}${(r.points || []).length} 個節點${fareStr}</div>
       <span class="transport-badge" style="background:${color}22;color:${color};">${t.label}</span>${catBadge}
     </div>
   </div>`;
@@ -1160,6 +1174,8 @@ function searchAndSaveRoute(origin, dest, name, transport, triggerBtnId) {
 
   const request = { origin, destination: dest, travelMode, region: 'jp' };
   if (transport === 'train') request.transitOptions = { departureTime: new Date() };
+  // For driving, ask Google for 2-3 alternative routes so the user can choose
+  if (transport === 'drive') request.provideRouteAlternatives = true;
 
   const btn = triggerBtnId ? document.getElementById(triggerBtnId) : null;
   const origText = btn ? btn.textContent : '';
@@ -1170,39 +1186,41 @@ function searchAndSaveRoute(origin, dest, name, transport, triggerBtnId) {
 
     if (status !== google.maps.DirectionsStatus.OK) {
       if (transport === 'train') {
-        // Translate Google's status into a plain-language reason so the user knows what went wrong
+        // Translate Google's status into a plain-language reason
         let reason;
         if (status === 'ZERO_RESULTS') {
-          reason = 'Google 沒有這段距離的電車路線資料（這段路線在 Google 大眾運輸資料庫裡查不到，常見於跨區、偏遠或起訖點離車站太遠的情況）。';
+          reason = 'Google 沒有這段電車路線資料（常見於跨區、偏遠或起訖點離車站太遠）。';
         } else if (status === 'NOT_FOUND') {
-          reason = '起點或終點的地址無法被定位（站名可能拼錯或不夠明確）。建議輸入完整車站名，例如「鎌倉駅」。';
+          reason = '起點或終點無法定位（站名可能不夠明確）。建議用完整車站名，例如「鎌倉駅」。';
         } else if (status === 'OVER_QUERY_LIMIT') {
           reason = '查詢次數過多，請稍候再試。';
         } else if (status === 'REQUEST_DENIED') {
-          reason = 'Directions API 權限被拒，請確認 API Key 已啟用 Directions API。';
+          reason = 'Directions API 權限被拒，請確認已啟用 Directions API。';
         } else {
           reason = `Google 回傳狀態：${status}`;
         }
-        const retry = confirm(`找不到電車路線。\n\n原因：${reason}\n\n要改用開車路線替代嗎？（存好後可在路線資料裡把交通方式改回電車）`);
-        if (retry) {
-          directionsService.route(
-            { origin, destination: dest, travelMode: google.maps.TravelMode.DRIVING, region: 'jp' },
-            async (result2, status2) => {
-              if (status2 !== google.maps.DirectionsStatus.OK) {
-                alert(`連開車路線也找不到（狀態：${status2}）。請確認起點和終點是否正確。`); return;
-              }
-              await saveRouteFromResult(result2, name, 'drive');
-            }
-          );
+        // Train fallback → let the user hand-draw the route on the map
+        const draw = confirm(`找不到電車路線。\n\n原因：${reason}\n\n要改用「手繪路線」嗎？\n（在地圖上沿著鐵路逐點點擊，雙擊完成）`);
+        if (draw) {
+          startManualDraw(name, 'train', pendingRouteColorForDraw());
         }
       } else {
-        alert(`找不到路線（狀態：${status}）。\n\n建議：輸入完整車站名或地標名稱，例如「大船駅」、「渋谷駅」。`);
+        alert(`找不到路線（狀態：${status}）。\n\n建議：輸入完整站名或地標名稱。`);
       }
+      return;
+    }
+
+    // Driving with multiple alternatives → let user pick
+    if (transport === 'drive' && result.routes.length > 1) {
+      openRouteAlternativesPicker(result, name, transport);
       return;
     }
     await saveRouteFromResult(result, name, transport);
   });
 }
+
+// Default color for a hand-drawn route (uses transport default)
+function pendingRouteColorForDraw() { return null; }
 
 function clearTopRouteInputs() {
   document.getElementById('top-r-origin').value = '';
@@ -1210,9 +1228,10 @@ function clearTopRouteInputs() {
   routeOriginCoord = null; routeDestCoord = null;
 }
 
-async function saveRouteFromResult(result, name, transport) {
+async function saveRouteFromResult(result, name, transport, routeIndex) {
   const t = TRANSPORT[transport];
-  const leg = result.routes[0].legs[0];
+  const idx = routeIndex || 0;
+  const leg = result.routes[idx].legs[0];
   const points = [];
   leg.steps.forEach(step => {
     if (step.steps) {
@@ -1232,12 +1251,100 @@ async function saveRouteFromResult(result, name, transport) {
   // Show the computed route on the map as a preview while the user fills in details
   directionsRenderer.setMap(map);
   directionsRenderer.setDirections(result);
+  directionsRenderer.setRouteIndex(idx);
   directionsRenderer.setOptions({ polylineOptions: { strokeColor: t.color, strokeWeight: 4, strokeOpacity: 0.6 } });
 
   // Stash the route data and open the details form to collect category/date/note/trip
   pendingRoute = { name, transport, points: sampled };
   openRouteDetailsModal(name);
 }
+
+// ── Driving alternatives picker: preview each route, let user choose ──
+let altPickerData = null;
+function openRouteAlternativesPicker(result, name, transport) {
+  altPickerData = { result, name, transport };
+  const list = document.getElementById('route-alt-list');
+  list.innerHTML = result.routes.map((rt, i) => {
+    const leg = rt.legs[0];
+    const summary = rt.summary || `路線 ${i + 1}`;
+    const dist = leg.distance ? leg.distance.text : '';
+    const dur = leg.duration ? leg.duration.text : '';
+    return `<div class="route-alt-item" onclick="pickRouteAlternative(${i})">
+      <div class="route-alt-name">路線 ${i + 1}${summary ? '：' + esc(summary) : ''}</div>
+      <div class="route-alt-meta">${dist}${dist && dur ? ' · ' : ''}${dur}</div>
+    </div>`;
+  }).join('');
+  // Preview all routes faintly on the map
+  directionsRenderer.setMap(map);
+  directionsRenderer.setDirections(result);
+  directionsRenderer.setRouteIndex(0);
+  document.getElementById('route-alt-modal').classList.remove('hidden');
+}
+
+window.pickRouteAlternative = async function(i) {
+  if (!altPickerData) return;
+  const { result, name, transport } = altPickerData;
+  document.getElementById('route-alt-modal').classList.add('hidden');
+  altPickerData = null;
+  await saveRouteFromResult(result, name, transport, i);
+};
+
+window.previewRouteAlternative = function(i) {
+  if (directionsRenderer && altPickerData) directionsRenderer.setRouteIndex(i);
+};
+
+window.closeRouteAltModal = function() {
+  document.getElementById('route-alt-modal').classList.add('hidden');
+  directionsRenderer.setMap(null);
+  altPickerData = null;
+};
+
+// ── Manual route drawing (used as train fallback) ──
+let manualDraw = null;  // { name, transport, color, path:[], polyline }
+function startManualDraw(name, transport, color) {
+  const t = TRANSPORT[transport] || TRANSPORT.train;
+  manualDraw = { name, transport, color, path: [], polyline: null };
+  manualDraw.polyline = new google.maps.Polyline({
+    path: [], map, strokeColor: color || t.color, strokeWeight: 4, strokeOpacity: 0.8,
+  });
+  setMode('view');
+  const ind = document.getElementById('mode-indicator');
+  ind.textContent = '手繪路線：沿鐵路逐點點擊，雙擊完成';
+  ind.classList.remove('hidden');
+  // Show a finish button
+  document.getElementById('manual-draw-bar').classList.remove('hidden');
+}
+
+function addManualDrawPoint(latLng) {
+  if (!manualDraw) return;
+  manualDraw.path.push({ lat: latLng.lat(), lng: latLng.lng() });
+  manualDraw.polyline.setPath(manualDraw.path.map(p => ({ lat: p.lat, lng: p.lng })));
+}
+
+window.finishManualDraw = async function() {
+  if (!manualDraw) return;
+  document.getElementById('manual-draw-bar').classList.add('hidden');
+  document.getElementById('mode-indicator').classList.add('hidden');
+  if (manualDraw.path.length < 2) {
+    alert('至少需要點兩個點才能畫出路線。');
+    if (manualDraw.polyline) manualDraw.polyline.setMap(null);
+    manualDraw = null;
+    return;
+  }
+  // Stash and open the details form (reuse the same modal)
+  if (manualDraw.polyline) manualDraw.polyline.setMap(null);
+  pendingRoute = { name: manualDraw.name, transport: manualDraw.transport, points: manualDraw.path };
+  const nm = manualDraw.name;
+  manualDraw = null;
+  openRouteDetailsModal(nm);
+};
+
+window.cancelManualDraw = function() {
+  if (manualDraw && manualDraw.polyline) manualDraw.polyline.setMap(null);
+  manualDraw = null;
+  document.getElementById('manual-draw-bar').classList.add('hidden');
+  document.getElementById('mode-indicator').classList.add('hidden');
+};
 
 // ── Route details modal (filled in after a route is computed) ──
 function openRouteDetailsModal(defaultName) {
@@ -1246,14 +1353,22 @@ function openRouteDetailsModal(defaultName) {
   document.getElementById('rd-transport').value = pendingRoute.transport;
   document.getElementById('rd-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('rd-note').value = '';
+  document.getElementById('rd-fare').value = '';
   // Default route color = the transport's default color, but user can change it
   pendingRouteColor = (TRANSPORT[pendingRoute.transport] || TRANSPORT.drive).color;
   renderRouteColorPicker();
+  onRouteTransportChange();  // show/hide fare row based on transport
   refreshRouteTripDropdown();
   const rdTrip = document.getElementById('rd-trip');
   if (rdTrip) rdTrip.value = (viewMode === 'trips' && selectedTripId && selectedTripId !== '__wishlist__') ? selectedTripId : '';
   document.getElementById('route-details-modal').classList.remove('hidden');
 }
+
+// Show the fare field only when transport is 電車
+window.onRouteTransportChange = function() {
+  const isTrain = document.getElementById('rd-transport').value === 'train';
+  document.getElementById('rd-fare-row').classList.toggle('hidden', !isTrain);
+};
 
 function renderRouteColorPicker() {
   const wrap = document.getElementById('rd-color-picker');
@@ -1281,6 +1396,7 @@ window.saveRouteDetails = async function() {
     color: pendingRouteColor,
     date:  document.getElementById('rd-date').value,
     note:  document.getElementById('rd-note').value.trim(),
+    fare:  document.getElementById('rd-transport').value === 'train' ? (document.getElementById('rd-fare').value || '') : '',
     tripId: document.getElementById('rd-trip').value || '',
   };
   await addRoute(data);
