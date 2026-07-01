@@ -133,6 +133,7 @@ let routeClickTarget = null;      // pending {lat,lng,label} when picking origin
 let routeOriginCoord = null, routeDestCoord = null;  // precise coords when origin/dest picked from map
 let pendingRoute = null;          // computed route awaiting details-form confirmation
 let pendingRouteColor = '#378ADD';  // selected color in route details modal
+let editingRouteId = null;        // set when editing an existing route via the details modal
 let pendingImport = null;
 let sidebarOpen = true;
 let deleteSelected = new Set();
@@ -632,6 +633,9 @@ function selectPlace(id) {
   document.getElementById('info-meta').innerHTML =
     `<span style="display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;background:${color}22;color:${color};margin-right:6px;">${p.tag}</span>${p.date || ''}`;
   document.getElementById('info-note').textContent = p.note || '（尚無筆記）';
+  const photo = document.getElementById('info-photo');
+  if (p.photo) { photo.src = p.photo; photo.classList.remove('hidden'); photo.onerror = () => photo.classList.add('hidden'); }
+  else { photo.classList.add('hidden'); photo.removeAttribute('src'); }
   document.getElementById('info-panel').classList.remove('hidden');
   syncPlaceMarkers(); renderList();
   map.panTo({ lat: p.lat, lng: p.lng });
@@ -659,6 +663,7 @@ window.editSelectedPlace = function() {
   document.getElementById('f-tag').value = p.tag || '美食';
   document.getElementById('f-date').value = p.date || '';
   document.getElementById('f-note').value = p.note || '';
+  document.getElementById('f-photo').value = p.photo || '';
   document.getElementById('f-wishlist').checked = !!p.wishlist;
   applyWishlistUI(!!p.wishlist);
   // Populate pickers with this place's stored icon/color (raw, not the black wishlist override)
@@ -816,6 +821,33 @@ window.toggleFavorite = async function(id) {
   await updatePlace(id, { favorite: !p.favorite });
 };
 
+window.toggleRouteFavorite = async function(id) {
+  const r = routes.find(x => x.id === id);
+  if (!r) return;
+  await updateRoute(id, { favorite: !r.favorite });
+};
+
+// Edit an existing route via the route-details modal (no map recompute)
+window.editRoute = function(id) {
+  const r = routes.find(x => x.id === id);
+  if (!r) return;
+  editingRouteId = id;
+  pendingRoute = { name: r.name, transport: r.transport, points: r.points || [] };
+  document.getElementById('rd-name').value = r.name || '';
+  document.getElementById('rd-cat').value = r.cat || ROUTE_CATEGORIES[0];
+  document.getElementById('rd-transport').value = r.transport || 'drive';
+  document.getElementById('rd-date').value = r.date || '';
+  document.getElementById('rd-note').value = r.note || '';
+  document.getElementById('rd-fare').value = r.fare || '';
+  pendingRouteColor = routeColor(r);
+  renderRouteColorPicker();
+  onRouteTransportChange();
+  refreshRouteTripDropdown();
+  document.getElementById('rd-trip').value = r.tripId || '';
+  document.querySelector('#route-details-modal h3').textContent = '編輯路線';
+  document.getElementById('route-details-modal').classList.remove('hidden');
+};
+
 function routeItemHtml(r) {
   const t = TRANSPORT[r.transport] || TRANSPORT.drive;
   const color = routeColor(r);
@@ -823,14 +855,23 @@ function routeItemHtml(r) {
   const delSel = deleteSelected.has(`route:${r.id}`);
   const catBadge = r.cat ? `<span class="route-cat-badge">${esc(r.cat)}</span>` : '';
   const fareStr = r.fare ? ` · ¥${esc(String(r.fare))}` : '';
+  const fav = !!r.favorite;
+  const heart = mode === 'delete' ? '' :
+    `<button class="fav-btn${fav ? ' active' : ''}" title="${fav ? '取消收藏' : '加入我的最愛'}" onclick="event.stopPropagation();toggleRouteFavorite('${r.id}')">
+      <svg class="icon"><use href="#icon-heart-${fav ? 'filled' : 'outline'}"/></svg>
+    </button>`;
+  const editBtn = mode === 'delete' ? '' :
+    `<button class="route-edit-btn" title="編輯路線" onclick="event.stopPropagation();editRoute('${r.id}')"><svg class="icon"><use href="#icon-edit"/></svg></button>`;
   return `<div class="route-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" onclick="selectRoute('${r.id}')">
     ${mode === 'delete' ? `<div class="delete-checkbox${delSel ? ' checked' : ''}"></div>` : ''}
+    ${heart}
     <div class="route-swatch" style="background:${color};"></div>
     <div class="route-info">
       <div class="route-name">${esc(r.name)}</div>
       <div class="route-meta">${r.date || ''}${r.date ? ' · ' : ''}${(r.points || []).length} 個節點${fareStr}</div>
       <span class="transport-badge" style="background:${color}22;color:${color};">${t.label}</span>${catBadge}
     </div>
+    ${editBtn}
   </div>`;
 }
 
@@ -1128,6 +1169,7 @@ function openAddModal(prefillName) {
   document.getElementById('modal-title').textContent = '新增地點';
   document.getElementById('f-name').value = prefillName || '';
   document.getElementById('f-note').value = '';
+  document.getElementById('f-photo').value = '';
   document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('f-tag').value = '美食';
   document.getElementById('f-wishlist').checked = false;
@@ -1189,6 +1231,7 @@ window.savePlace = async function() {
     tag:   document.getElementById('f-tag').value,
     date:  document.getElementById('f-date').value,
     note:  document.getElementById('f-note').value.trim(),
+    photo: document.getElementById('f-photo').value.trim(),
     icon:  pendingIcon,
     color: pendingColor,
     tripId: document.getElementById('f-trip').value || '',
@@ -1217,6 +1260,44 @@ window.closeModal = function() {
 // ══════════════════════════════════════
 window.openSettings = function() { document.getElementById('settings-overlay').classList.remove('hidden'); };
 window.closeSettings = function() { document.getElementById('settings-overlay').classList.add('hidden'); };
+
+window.openStats = function() {
+  renderStatsContent();
+  document.getElementById('stats-overlay').classList.remove('hidden');
+};
+window.closeStats = function() { document.getElementById('stats-overlay').classList.add('hidden'); };
+
+function renderStatsContent() {
+  const visited = places.filter(p => !p.wishlist);
+  const wish = places.filter(p => p.wishlist);
+  const fav = places.filter(p => p.favorite);
+  // Count by category (visited only)
+  const byTag = {};
+  visited.forEach(p => { byTag[p.tag] = (byTag[p.tag] || 0) + 1; });
+  const tagRows = Object.keys(byTag).sort((a, b) => byTag[b] - byTag[a])
+    .map(tag => {
+      const color = TAG_DEFAULT_COLOR[tag] || '#888';
+      return `<div class="stat-row">
+        <span class="stat-dot" style="background:${color};"></span>
+        <span class="stat-label">${esc(tag)}</span>
+        <span class="stat-num">${byTag[tag]}</span>
+      </div>`;
+    }).join('');
+  // Total transit fare
+  const totalFare = routes.reduce((s, r) => s + (Number(r.fare) || 0), 0);
+
+  document.getElementById('stats-content').innerHTML = `
+    <div class="stat-cards">
+      <div class="stat-card"><div class="stat-card-num">${visited.length}</div><div class="stat-card-lbl">已去地點</div></div>
+      <div class="stat-card"><div class="stat-card-num">${wish.length}</div><div class="stat-card-lbl">想去的地方</div></div>
+      <div class="stat-card"><div class="stat-card-num">${fav.length}</div><div class="stat-card-lbl">我的最愛</div></div>
+      <div class="stat-card"><div class="stat-card-num">${routes.length}</div><div class="stat-card-lbl">路線</div></div>
+      <div class="stat-card"><div class="stat-card-num">${trips.length}</div><div class="stat-card-lbl">行程</div></div>
+      <div class="stat-card"><div class="stat-card-num">¥${totalFare.toLocaleString()}</div><div class="stat-card-lbl">電車總花費</div></div>
+    </div>
+    ${tagRows ? `<div class="stat-section-title">已去地點分類</div><div class="stat-list">${tagRows}</div>` : ''}
+  `;
+}
 
 // ══════════════════════════════════════
 // Auto Route (Directions API) — used by top search bar
@@ -1473,28 +1554,37 @@ window.pickRouteColor = function(c) { pendingRouteColor = c; renderRouteColorPic
 
 window.closeRouteDetailsModal = function() {
   document.getElementById('route-details-modal').classList.add('hidden');
+  document.querySelector('#route-details-modal h3').textContent = '路線資料';
   directionsRenderer.setMap(null);
   pendingRoute = null;
+  editingRouteId = null;
 };
 
 window.saveRouteDetails = async function() {
   if (!pendingRoute) return;
   const name = document.getElementById('rd-name').value.trim() || pendingRoute.name;
+  const transport = document.getElementById('rd-transport').value;
   const data = {
     name,
-    transport: document.getElementById('rd-transport').value,
+    transport,
     points: pendingRoute.points,
     cat:   document.getElementById('rd-cat').value,
     color: pendingRouteColor,
     date:  document.getElementById('rd-date').value,
     note:  document.getElementById('rd-note').value.trim(),
-    fare:  document.getElementById('rd-transport').value === 'train' ? (document.getElementById('rd-fare').value || '') : '',
+    fare:  transport === 'train' ? (document.getElementById('rd-fare').value || '') : '',
     tripId: document.getElementById('rd-trip').value || '',
   };
-  await addRoute(data);
+  if (editingRouteId) {
+    await updateRoute(editingRouteId, data);
+    editingRouteId = null;
+  } else {
+    await addRoute(data);
+  }
   directionsRenderer.setMap(null);
   pendingRoute = null;
   document.getElementById('route-details-modal').classList.add('hidden');
+  document.querySelector('#route-details-modal h3').textContent = '路線資料';
   clearTopRouteInputs();
   if (viewMode === 'all' && activeTab !== 'routes') switchTab('routes');
 }
