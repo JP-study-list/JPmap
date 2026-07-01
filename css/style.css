@@ -22,9 +22,12 @@ input, select, textarea { font-family: inherit; }
 .mdb-hint { font-size: 13px; color: #555; }
 .mdb-cancel { padding: 6px 14px; border: 0.5px solid #ddd; border-radius: 8px; background: #fff; font-size: 13px; color: #888; }
 .mdb-finish { padding: 6px 16px; border: none; border-radius: 8px; background: #185FA5; color: #fff; font-size: 13px; font-weight: 500; }
-/* Route alternatives list */
+/* Route alternatives floating panel */
+#route-alt-modal { position: absolute; top: 16px; right: 16px; z-index: 30; background: #fff; border-radius: 14px; padding: 16px; box-shadow: 0 6px 28px rgba(0,0,0,0.2); width: 280px; }
+#route-alt-modal h3 { font-size: 15px; margin-bottom: 4px; }
 .route-alt-item { padding: 12px 14px; border: 0.5px solid #e5e5e5; border-radius: 10px; margin-bottom: 8px; cursor: pointer; transition: all 0.15s; }
 .route-alt-item:hover { border-color: #185FA5; background: #f5f9ff; }
+.route-alt-item.selected { border-color: #185FA5; background: #EBF3FC; box-shadow: 0 0 0 1px #185FA5; }
 .route-alt-name { font-size: 14px; font-weight: 500; color: #1a1a1a; }
 .route-alt-meta { font-size: 12px; color: #888; margin-top: 3px; }
 
@@ -173,6 +176,14 @@ input, select, textarea { font-family: inherit; }
 .unfiled-header:hover { background: #f2f2f2; }
 .wishlist-header { padding: 9px 14px; font-size: 13px; font-weight: 600; color: #1a1a1a; cursor: pointer; display: flex; align-items: center; gap: 7px; background: #f4f4f4; }
 .wishlist-header:hover { background: #ececec; }
+.favorite-header { padding: 9px 14px; font-size: 13px; font-weight: 600; color: #1a1a1a; cursor: pointer; display: flex; align-items: center; gap: 7px; background: #fdf2f5; }
+.favorite-header:hover { background: #fbe8ee; }
+.favorite-header .chev { width: 13px; height: 13px; color: #999; transition: transform 0.15s; }
+.favorite-header.collapsed .chev { transform: rotate(-90deg); }
+.fav-btn { background: none; border: none; padding: 2px; cursor: pointer; flex-shrink: 0; display: flex; align-items: center; color: #ccc; transition: color 0.15s, transform 0.1s; }
+.fav-btn:hover { color: #E0245E; transform: scale(1.15); }
+.fav-btn.active { color: #E0245E; }
+.fav-btn .icon { width: 17px; height: 17px; }
 .wishlist-header .chev { width: 13px; height: 13px; color: #999; transition: transform 0.15s; }
 .wishlist-header.collapsed .chev { transform: rotate(-90deg); }
 .wish-badge { display: inline-block; font-size: 9px; padding: 1px 6px; border-radius: 999px; margin-left: 6px; background: #1a1a1a; color: #fff; font-weight: 500; vertical-align: middle; }

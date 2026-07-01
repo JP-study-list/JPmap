@@ -336,10 +336,37 @@ async function handleRoutePointPick(latLng, placeId) {
       label = '選定地點';
     }
   } else {
-    label = `座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`;
+    // Blank spot (or an unclickable label like a station name): reverse-geocode to a nearby name.
+    label = await reverseGeocodeLabel(latLng);
   }
   routeClickTarget = { lat: latLng.lat(), lng: latLng.lng(), label };
   showRoutePointMenu(latLng);
+}
+
+// Reverse geocode a coordinate to the most useful nearby name (prefers stations/POIs)
+function reverseGeocodeLabel(latLng) {
+  return new Promise((resolve) => {
+    try {
+      if (!window._geocoder) window._geocoder = new google.maps.Geocoder();
+      window._geocoder.geocode({ location: latLng, language: 'zh-TW' }, (results, status) => {
+        if (status === 'OK' && results && results.length) {
+          // Prefer a result that looks like a station or point of interest
+          const station = results.find(r => (r.types || []).some(t =>
+            ['transit_station', 'train_station', 'subway_station', 'point_of_interest', 'establishment'].includes(t)));
+          const best = station || results[0];
+          // Use the short name (first address component) rather than the full address
+          const name = best.address_components && best.address_components.length
+            ? best.address_components[0].long_name
+            : best.formatted_address;
+          resolve(name || `座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`);
+        } else {
+          resolve(`座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`);
+        }
+      });
+    } catch {
+      resolve(`座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`);
+    }
+  });
 }
 
 function showRoutePointMenu(latLng) {
@@ -766,8 +793,14 @@ function placeItemHtml(p) {
   const color = placeColor(p);
   const iconKey = placeIcon(p);
   const wishBadge = p.wishlist ? `<span class="wish-badge">想去</span>` : '';
+  const fav = !!p.favorite;
+  const heart = mode === 'delete' ? '' :
+    `<button class="fav-btn${fav ? ' active' : ''}" title="${fav ? '取消收藏' : '加入我的最愛'}" onclick="event.stopPropagation();toggleFavorite('${p.id}')">
+      <svg class="icon"><use href="#icon-heart-${fav ? 'filled' : 'outline'}"/></svg>
+    </button>`;
   return `<div class="place-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" onclick="selectPlace('${p.id}')">
     ${mode === 'delete' ? `<div class="delete-checkbox${delSel ? ' checked' : ''}"></div>` : ''}
+    ${heart}
     <div class="place-icon" style="background:${color};"><svg class="icon" style="color:#fff;"><use href="#pin-${iconKey}"/></svg></div>
     <div class="place-info">
       <div class="place-name">${esc(p.name)}${wishBadge}</div>
@@ -776,6 +809,12 @@ function placeItemHtml(p) {
     </div>
   </div>`;
 }
+
+window.toggleFavorite = async function(id) {
+  const p = places.find(x => x.id === id);
+  if (!p) return;
+  await updatePlace(id, { favorite: !p.favorite });
+};
 
 function routeItemHtml(r) {
   const t = TRANSPORT[r.transport] || TRANSPORT.drive;
@@ -799,14 +838,31 @@ function routeItemHtml(r) {
 function renderTripsTree() {
   const list = document.getElementById('content-list');
   const wishPlaces = places.filter(p => p.wishlist);
+  const favPlaces = places.filter(p => p.favorite);
   const realPlaces = places.filter(p => !p.wishlist);  // visited/normal places
 
-  if (trips.length === 0 && realPlaces.every(p => !p.tripId) && routes.every(r => !r.tripId) && wishPlaces.length === 0) {
+  if (trips.length === 0 && realPlaces.every(p => !p.tripId) && routes.every(r => !r.tripId) && wishPlaces.length === 0 && favPlaces.length === 0) {
     list.innerHTML = '<div class="list-empty">尚無行程<br>點上方「新增行程」建立你的第一個行程<br>或在新增地點時勾選「想去的地方」</div>';
     return;
   }
 
   let html = '';
+
+  // ── 我的最愛 group (all favorited places) ──
+  if (favPlaces.length > 0) {
+    const collapsed = collapsedYears.has('__favorite__');
+    html += `<div class="year-group">
+      <div class="favorite-header${collapsed ? ' collapsed' : ''}" onclick="toggleYear('__favorite__')">
+        <svg class="icon chev"><use href="#icon-chevron-left"/></svg>
+        <svg class="icon" style="width:14px;height:14px;color:#E0245E;"><use href="#icon-heart-filled"/></svg>
+        我的最愛
+        <span class="year-count">${favPlaces.length} 個</span>
+      </div>`;
+    if (!collapsed) {
+      html += favPlaces.map(p => placeItemHtml(p)).join('');
+    }
+    html += `</div>`;
+  }
 
   // ── 想去的地方 group (all wishlist places, regardless of their tripId) ──
   if (wishPlaces.length > 0) {
@@ -1259,41 +1315,77 @@ async function saveRouteFromResult(result, name, transport, routeIndex) {
   openRouteDetailsModal(name);
 }
 
-// ── Driving alternatives picker: preview each route, let user choose ──
-let altPickerData = null;
+// ── Driving alternatives: draw all on map, click a line to choose ──
+let altPickerData = null;      // { result, name, transport, selectedIndex }
+let altPolylines = [];         // preview polylines for each alternative
 function openRouteAlternativesPicker(result, name, transport) {
-  altPickerData = { result, name, transport };
+  altPickerData = { result, name, transport, selectedIndex: 0 };
+  // Hide the built-in renderer; we draw our own clickable previews
+  directionsRenderer.setMap(null);
+  drawAltPreviews();
+  // Populate the floating list
   const list = document.getElementById('route-alt-list');
   list.innerHTML = result.routes.map((rt, i) => {
     const leg = rt.legs[0];
     const summary = rt.summary || `路線 ${i + 1}`;
     const dist = leg.distance ? leg.distance.text : '';
     const dur = leg.duration ? leg.duration.text : '';
-    return `<div class="route-alt-item" onclick="pickRouteAlternative(${i})">
+    return `<div class="route-alt-item" data-idx="${i}" onclick="selectAltRoute(${i})">
       <div class="route-alt-name">路線 ${i + 1}${summary ? '：' + esc(summary) : ''}</div>
       <div class="route-alt-meta">${dist}${dist && dur ? ' · ' : ''}${dur}</div>
     </div>`;
   }).join('');
-  // Preview all routes faintly on the map
-  directionsRenderer.setMap(map);
-  directionsRenderer.setDirections(result);
-  directionsRenderer.setRouteIndex(0);
+  updateAltListSelection();
   document.getElementById('route-alt-modal').classList.remove('hidden');
 }
 
-window.pickRouteAlternative = async function(i) {
+function drawAltPreviews() {
+  clearAltPreviews();
+  const { result, selectedIndex } = altPickerData;
+  result.routes.forEach((rt, i) => {
+    const path = rt.overview_path || [];
+    const selected = i === selectedIndex;
+    const poly = new google.maps.Polyline({
+      path, map,
+      strokeColor: selected ? '#185FA5' : '#9AA5B1',
+      strokeWeight: selected ? 6 : 4,
+      strokeOpacity: selected ? 0.95 : 0.5,
+      zIndex: selected ? 10 : 1,
+    });
+    poly.addListener('click', () => selectAltRoute(i));
+    altPolylines.push(poly);
+  });
+}
+
+function clearAltPreviews() {
+  altPolylines.forEach(p => p.setMap(null));
+  altPolylines = [];
+}
+
+window.selectAltRoute = function(i) {
   if (!altPickerData) return;
-  const { result, name, transport } = altPickerData;
-  document.getElementById('route-alt-modal').classList.add('hidden');
-  altPickerData = null;
-  await saveRouteFromResult(result, name, transport, i);
+  altPickerData.selectedIndex = i;
+  drawAltPreviews();
+  updateAltListSelection();
 };
 
-window.previewRouteAlternative = function(i) {
-  if (directionsRenderer && altPickerData) directionsRenderer.setRouteIndex(i);
+function updateAltListSelection() {
+  document.querySelectorAll('#route-alt-list .route-alt-item').forEach(el => {
+    el.classList.toggle('selected', Number(el.dataset.idx) === altPickerData.selectedIndex);
+  });
+}
+
+window.confirmRouteAlternative = async function() {
+  if (!altPickerData) return;
+  const { result, name, transport, selectedIndex } = altPickerData;
+  clearAltPreviews();
+  document.getElementById('route-alt-modal').classList.add('hidden');
+  altPickerData = null;
+  await saveRouteFromResult(result, name, transport, selectedIndex);
 };
 
 window.closeRouteAltModal = function() {
+  clearAltPreviews();
   document.getElementById('route-alt-modal').classList.add('hidden');
   directionsRenderer.setMap(null);
   altPickerData = null;
