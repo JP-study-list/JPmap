@@ -2,124 +2,42 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where }
+import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-const firebaseConfig = {
-  apiKey: "AIzaSyCN2CD_zIC7FedAfRm6ZnVh7jIqhZD6NWs",
-  authDomain: "japan-map-500903.firebaseapp.com",
-  projectId: "japan-map-500903",
-  storageBucket: "japan-map-500903.firebasestorage.app",
-  messagingSenderId: "447815719019",
-  appId: "1:447815719019:web:16c9a59eef4e71fe3c392e"
-};
+// ── App modules ──
+import {
+  firebaseConfig, TRANSPORT, ROUTE_CATEGORIES, WISHLIST_COLOR, TAG_STYLE,
+  ICON_CATALOG, TAG_DEFAULT_ICON, TAG_DEFAULT_COLOR, COLOR_PALETTE, ICON_SVG_PATHS,
+  MARKER_BASE_ZOOM, MARKER_BASE_SCALE, MARKER_MIN_SCALE, MARKER_MAX_SCALE,
+} from './config.js';
+import { esc, placeIcon, placeColor, routeColor, byOrder, fmtDate, localToday, stripUndefined } from './helpers.js';
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 const db = getFirestore(fbApp);
 const googleProvider = new GoogleAuthProvider();
 
-// ── Constants ──
-const TRANSPORT = {
-  drive: { label: '開車 / 公車', color: '#378ADD', dash: [8, 4] },
-  walk:  { label: '走路',        color: '#EF9F27', dash: [4, 4] },
-  train: { label: '電車',        color: '#D85A30', dash: [12, 3] },
-};
-// Route-specific categories (separate from place tags)
-const ROUTE_CATEGORIES = ['散步', '通勤', '觀光', '美食巡禮', '購物', '其他'];
-// Color used for places marked as "want to go" (not yet visited)
-const WISHLIST_COLOR = '#1a1a1a';
-const TAG_STYLE = {
-  '美食': { bg: '#FAEEDA', text: '#633806' },
-  '神社': { bg: '#E1F5EE', text: '#085041' },
-  '自然': { bg: '#EAF3DE', text: '#27500A' },
-  '文化': { bg: '#EEEDFE', text: '#3C3489' },
-  '購物': { bg: '#FAECE7', text: '#712B13' },
-  '住宿': { bg: '#E8F0FE', text: '#1A3A7A' },
-  '交通': { bg: '#FCE8E6', text: '#8C2D1E' },
-  '活動': { bg: '#FDF6D8', text: '#7A5B00' },
-};
-
-// Icon catalog — keys map to SVG symbol ids in index.html (pin-*).
-// Each entry has a label and the inner SVG path markup (used to build map marker data-URIs).
-const ICON_CATALOG = {
-  pin:      { label: '圖釘' },
-  food:     { label: '美食' },
-  cafe:     { label: '咖啡' },
-  shrine:   { label: '神社' },
-  castle:   { label: '城堡' },
-  nature:   { label: '自然' },
-  shopping: { label: '購物' },
-  lodging:  { label: '住宿' },
-  station:  { label: '車站' },
-  camera:   { label: '景點' },
-  heart:    { label: '愛心' },
-  star:     { label: '星星' },
-};
-
-// Default icon per category
-const TAG_DEFAULT_ICON = {
-  '美食': 'food', '神社': 'shrine', '自然': 'nature', '文化': 'castle',
-  '購物': 'shopping', '住宿': 'lodging', '交通': 'station', '活動': 'star',
-};
-// Default color per category
-const TAG_DEFAULT_COLOR = {
-  '美食': '#E8833A', '神社': '#0E8A6E', '自然': '#4C9A2A', '文化': '#6C5CE7',
-  '購物': '#D6336C', '住宿': '#2B7DE9', '交通': '#C0392B', '活動': '#F1B807',
-};
-
-// Color palette for the picker (8-10 common colors)
-const COLOR_PALETTE = ['#E0392B', '#E8833A', '#F1B807', '#4C9A2A', '#0E8A6E', '#2B7DE9', '#6C5CE7', '#D6336C', '#7A5C3E', '#566573'];
-
-// Raw SVG inner markup for each icon, used to render map markers as data-URIs.
-// (Kept minimal — white stroke on a colored circle.)
-const ICON_SVG_PATHS = {
-  pin:      '<path d="M12 21c-3.5-3.5-7-6.93-7-11a7 7 0 0 1 14 0c0 4.07-3.5 7.5-7 11Z" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.5" fill="none" stroke="#fff" stroke-width="1.8"/>',
-  food:     '<path d="M6 3v7a2 2 0 0 0 2 2v9M6 3v5M9 3v5M16 3c-1.5 0-2.5 2-2.5 5s1 4 2.5 4v9" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
-  cafe:     '<path d="M5 8h12v5a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5V8ZM17 9h2a2 2 0 0 1 0 4h-2M7 3v2M10 3v2M13 3v2" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
-  shrine:   '<path d="M3 7h18M4 7l1-2.5h14L20 7M6 7v13M18 7v13M5 11h14" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
-  castle:   '<path d="M4 21V8l2 1V6l2 1V5l2 1V4h4v2l2-1v2l2-1v3l2-1v13M4 21h16M9 21v-4a3 3 0 0 1 6 0v4" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
-  nature:   '<path d="M12 3 5 13h4l-3 5h12l-3-5h4L12 3ZM12 18v3" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
-  shopping: '<path d="M6 8h12l-1 12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 8ZM9 8V6a3 3 0 0 1 6 0v2" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
-  lodging:  '<path d="M3 18v-6a2 2 0 0 1 2-2h10a4 4 0 0 1 4 4v4M3 14h16M3 18v2M21 14v6M7 10V7a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
-  station:  '<rect x="5" y="3" width="14" height="13" rx="3" fill="none" stroke="#fff" stroke-width="1.7"/><line x1="5" y1="10" x2="19" y2="10" stroke="#fff" stroke-width="1.7"/><circle cx="9" cy="13.2" r="1" fill="#fff"/><circle cx="15" cy="13.2" r="1" fill="#fff"/><line x1="8.5" y1="16" x2="7" y2="20" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><line x1="15.5" y1="16" x2="17" y2="20" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/>',
-  camera:   '<path d="M3 8a2 2 0 0 1 2-2h2l1.5-2h7L19 6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12.5" r="3.2" fill="none" stroke="#fff" stroke-width="1.6"/>',
-  heart:    '<path d="M12 20s-7-4.6-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.4-7 10-7 10Z" fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/>',
-  star:     '<path d="m12 3 2.6 5.6 6 .8-4.4 4.2 1.1 6L12 16.8 6.7 19.6l1.1-6L3.4 9.4l6-.8L12 3Z" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>',
-};
-
-// Resolve a place's effective icon and color (custom overrides, else category default, else fallback)
-function placeIcon(p) { return p.icon || TAG_DEFAULT_ICON[p.tag] || 'pin'; }
-function placeColor(p) { return p.wishlist ? WISHLIST_COLOR : (p.color || TAG_DEFAULT_COLOR[p.tag] || '#566573'); }
-// Route effective color: custom color if set, else the transport's default color
-function routeColor(r) { return r.color || (TRANSPORT[r.transport] || TRANSPORT.drive).color; }
-// Sort by manual `order` field; items without order keep original (createdAt) order after ordered ones
-function byOrder(a, b) {
-  const ao = (typeof a.order === 'number') ? a.order : Infinity;
-  const bo = (typeof b.order === 'number') ? b.order : Infinity;
-  if (ao !== bo) return ao - bo;
-  return (a.createdAt || 0) - (b.createdAt || 0);
-}
-
-// Build a Google Maps marker icon (data-URI SVG): colored teardrop pin with white glyph inside.
+// Build a Google Maps marker icon (data-URI SVG), with a cache so identical
+// icon+color+size combos are generated only once (faster marker refresh).
+const markerIconCache = new Map();
 function buildMarkerIcon(iconKey, color, scale) {
-  const glyph = ICON_SVG_PATHS[iconKey] || ICON_SVG_PATHS.pin;
   const size = Math.round(scale * 3.2);
+  const cacheKey = `${iconKey}|${color}|${size}`;
+  if (markerIconCache.has(cacheKey)) return markerIconCache.get(cacheKey);
+  const glyph = ICON_SVG_PATHS[iconKey] || ICON_SVG_PATHS.pin;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24">
     <circle cx="12" cy="12" r="11" fill="${color}" stroke="#fff" stroke-width="1.5"/>
     <g transform="translate(2.6 2.6) scale(0.78)">${glyph}</g>
   </svg>`;
-  return {
+  const icon = {
     url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
     scaledSize: new google.maps.Size(size, size),
     anchor: new google.maps.Point(size / 2, size / 2),
   };
+  markerIconCache.set(cacheKey, icon);
+  return icon;
 }
-// Marker base scale at zoom 14; scales down/up with zoom level
-const MARKER_BASE_ZOOM = 14;
-const MARKER_BASE_SCALE = 7;
-const MARKER_MIN_SCALE = 3;
-const MARKER_MAX_SCALE = 13;
 
 // ── State ──
 let map, directionsService, directionsRenderer, autocompleteService, placesService;
@@ -135,6 +53,8 @@ let editingPlaceId = null, pendingLatLng = null;
 let editingTripId = null;        // for trip create/edit modal
 let tripModalReturnToPlace = false;  // after creating a trip from the place modal, reopen place modal
 let pendingIcon = 'food', pendingColor = '#E8833A';  // for the icon/color picker in add/edit modal
+let pendingRating = 0;           // star rating in place modal (0 = none)
+let pendingPhotos = [];          // photo URLs in place modal (max 5)
 let topTransport = 'drive';       // for top search bar route mode
 let routeClickTarget = null;      // pending {lat,lng,label} when picking origin/dest from map in route mode
 let routeOriginCoord = null, routeDestCoord = null;  // precise coords when origin/dest picked from map
@@ -142,6 +62,7 @@ let pendingRoute = null;          // computed route awaiting details-form confir
 let pendingRouteColor = '#378ADD';  // selected color in route details modal
 let editingRouteId = null;        // set when editing an existing route via the details modal
 let routesHidden = false;         // when true, all route polylines are hidden on the map
+let listSearchText = '';          // sidebar list search filter (matches place/route names)
 let pendingImport = null;
 let sidebarOpen = true;
 let deleteSelected = new Set();
@@ -352,9 +273,14 @@ async function handleRoutePointPick(latLng, placeId) {
   showRoutePointMenu(latLng);
 }
 
-// Reverse geocode a coordinate to the most useful nearby name (prefers stations/POIs)
+// Reverse geocode a coordinate to the most useful nearby name (prefers stations/POIs).
+// Results are cached by rounded coordinate to avoid repeat API calls for the same spot.
+const geocodeCache = new Map();
 function reverseGeocodeLabel(latLng) {
+  const cacheKey = `${latLng.lat().toFixed(4)},${latLng.lng().toFixed(4)}`;
+  if (geocodeCache.has(cacheKey)) return Promise.resolve(geocodeCache.get(cacheKey));
   return new Promise((resolve) => {
+    const done = (label) => { geocodeCache.set(cacheKey, label); resolve(label); };
     try {
       if (!window._geocoder) window._geocoder = new google.maps.Geocoder();
       window._geocoder.geocode({ location: latLng, language: 'zh-TW' }, (results, status) => {
@@ -363,13 +289,12 @@ function reverseGeocodeLabel(latLng) {
           const station = results.find(r => (r.types || []).some(t =>
             ['transit_station', 'train_station', 'subway_station', 'point_of_interest', 'establishment'].includes(t)));
           const best = station || results[0];
-          // Use the short name (first address component) rather than the full address
           const name = best.address_components && best.address_components.length
             ? best.address_components[0].long_name
             : best.formatted_address;
-          resolve(name || `座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`);
+          done(name || `座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`);
         } else {
-          resolve(`座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`);
+          done(`座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`);
         }
       });
     } catch {
@@ -643,34 +568,69 @@ function clearMap() {
 // Selection
 // ══════════════════════════════════════
 function selectPlace(id) {
-  if (mode === 'delete') { toggleDeleteItem('place', id); return; }
+  if (mode === 'delete' || mode === 'batch') { toggleDeleteItem('place', id); return; }
   selectedPlaceId = id; selectedRouteId = null;
   const p = places.find(x => x.id === id);
   if (!p) return;
   const color = placeColor(p);
   document.getElementById('info-name').textContent = p.name;
+  const stars = p.rating ? `<span class="info-stars">${'★'.repeat(p.rating)}${'☆'.repeat(5 - p.rating)}</span>` : '';
   document.getElementById('info-meta').innerHTML =
-    `<span style="display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;background:${color}22;color:${color};margin-right:6px;">${p.tag}</span>${p.date || ''}`;
+    `<span style="display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;background:${color}22;color:${color};margin-right:6px;">${p.tag}</span>${p.date || ''}${stars}`;
   document.getElementById('info-note').textContent = p.note || '（尚無筆記）';
-  const photo = document.getElementById('info-photo');
-  if (p.photo) { photo.src = p.photo; photo.classList.remove('hidden'); photo.onerror = () => photo.classList.add('hidden'); }
-  else { photo.classList.add('hidden'); photo.removeAttribute('src'); }
+  const photos = Array.isArray(p.photos) ? p.photos : (p.photo ? [p.photo] : []);
+  const gallery = document.getElementById('info-photos');
+  if (photos.length) {
+    gallery.innerHTML = photos.map(u => `<img src="${esc(u)}" alt="地點照片" onerror="this.style.display='none'">`).join('');
+    gallery.classList.remove('hidden');
+  } else {
+    gallery.classList.add('hidden'); gallery.innerHTML = '';
+  }
+  // Show "mark as visited" button only for wishlist places
+  const visitedBtn = document.getElementById('mark-visited-btn');
+  if (visitedBtn) visitedBtn.classList.toggle('hidden', !p.wishlist);
   document.getElementById('info-panel').classList.remove('hidden');
-  syncPlaceMarkers(); renderList();
-  map.panTo({ lat: p.lat, lng: p.lng });
+  syncPlaceMarkers();
+  updateListSelection();
+  // Only move the map if the place is outside the current view (avoids jumpy panning)
+  const pos = { lat: p.lat, lng: p.lng };
+  const bounds = map.getBounds();
+  if (!bounds || !bounds.contains(pos)) map.panTo(pos);
 }
+
+// One-click: convert a wishlist place to "visited"
+window.markAsVisited = async function() {
+  if (!selectedPlaceId) return;
+  const p = places.find(x => x.id === selectedPlaceId);
+  if (!p || !p.wishlist) return;
+  await updatePlace(selectedPlaceId, { wishlist: false });
+  document.getElementById('mark-visited-btn').classList.add('hidden');
+};
 
 function selectRoute(id) {
   if (mode === 'delete') { toggleDeleteItem('route', id); return; }
   selectedRouteId = id; selectedPlaceId = null;
   document.getElementById('info-panel').classList.add('hidden');
-  syncRoutePolylines(); renderList();
+  syncRoutePolylines();
+  updateListSelection();
+}
+
+// Fast path: toggle .selected classes in the visible list without a full re-render
+// (prevents the flicker caused by rebuilding innerHTML on every click)
+function updateListSelection() {
+  document.querySelectorAll('#content-list .place-item, #content-list .route-item').forEach(el => {
+    const kind = el.dataset.itemKind, iid = el.dataset.itemId;
+    if (!kind || !iid) return;
+    const isSel = (kind === 'place' && iid === selectedPlaceId) || (kind === 'route' && iid === selectedRouteId);
+    el.classList.toggle('selected', isSel);
+  });
 }
 
 window.closeInfoPanel = function() {
   selectedPlaceId = null; selectedRouteId = null;
   document.getElementById('info-panel').classList.add('hidden');
-  syncPlaceMarkers(); renderList();
+  syncPlaceMarkers();
+  updateListSelection();
 };
 
 window.editSelectedPlace = function() {
@@ -682,7 +642,11 @@ window.editSelectedPlace = function() {
   document.getElementById('f-tag').value = p.tag || '美食';
   document.getElementById('f-date').value = p.date || '';
   document.getElementById('f-note').value = p.note || '';
-  document.getElementById('f-photo').value = p.photo || '';
+  document.getElementById('f-gmaps-url').value = '';
+  document.getElementById('f-gmaps-hint').classList.add('hidden');
+  pendingRating = p.rating || 0; renderRatingPicker();
+  pendingPhotos = Array.isArray(p.photos) ? p.photos.slice() : (p.photo ? [p.photo] : []);
+  renderPhotoInputs();
   document.getElementById('f-wishlist').checked = !!p.wishlist;
   applyWishlistUI(!!p.wishlist);
   // Populate pickers with this place's stored icon/color (raw, not the black wishlist override)
@@ -712,6 +676,8 @@ function toggleDeleteItem(type, id) {
   if (deleteSelected.has(key)) deleteSelected.delete(key);
   else deleteSelected.add(key);
   document.getElementById('delete-count').textContent = `已選 ${deleteSelected.size} 項`;
+  const bc = document.getElementById('batch-count');
+  if (bc) { const n = [...deleteSelected].filter(k => k.startsWith('place:')).length; bc.textContent = `已選 ${n} 個地點`; }
   renderList();
 }
 
@@ -744,15 +710,46 @@ window.setMode = function(m) {
   });
   const delBtn = document.getElementById('btn-delete');
   if (delBtn) delBtn.classList.toggle('delete-mode', m === 'delete');
+  const batchBtn = document.getElementById('btn-batch');
+  if (batchBtn) batchBtn.classList.toggle('active', m === 'batch');
   const delBar = document.getElementById('delete-bar');
   delBar.classList.toggle('hidden', m !== 'delete');
+  const batchBar = document.getElementById('batch-bar');
+  if (batchBar) batchBar.classList.toggle('hidden', m !== 'batch');
   document.getElementById('delete-count').textContent = '已選 0 項';
+  if (m === 'batch') {
+    document.getElementById('batch-count').textContent = '已選 0 個地點';
+    refreshBatchTripDropdown();
+  }
   const ind = document.getElementById('mode-indicator');
   if (m === 'pin') { ind.textContent = '點擊地圖新增地點'; ind.classList.remove('hidden'); }
   else if (m === 'delete') { ind.textContent = '點擊地點或路線來選取'; ind.classList.remove('hidden'); }
+  else if (m === 'batch') { ind.textContent = '點選地點，再選行程套用'; ind.classList.remove('hidden'); }
   else { ind.classList.add('hidden'); }
   if (map) map.setOptions({ draggableCursor: (m === 'pin') ? 'crosshair' : '' });
   renderList();
+};
+
+// Populate the batch-assign trip dropdown
+function refreshBatchTripDropdown() {
+  const sel = document.getElementById('batch-trip');
+  if (!sel) return;
+  const sorted = [...trips].sort((a, b) => (b.start || '').localeCompare(a.start || ''));
+  sel.innerHTML = '<option value="">— 選擇行程 —</option><option value="__unfile__">移出行程（未分類）</option>' +
+    sorted.map(t => `<option value="${t.id}">${esc(t.name)}${t.start ? ' (' + t.start + ')' : ''}</option>`).join('');
+}
+
+window.applyBatchTrip = async function() {
+  const sel = document.getElementById('batch-trip');
+  const val = sel ? sel.value : '';
+  if (!val) { alert('請先選擇要套用的行程'); return; }
+  const picked = [...deleteSelected].filter(k => k.startsWith('place:')).map(k => k.slice(6));
+  if (picked.length === 0) { alert('請先點選至少一個地點'); return; }
+  const tripId = val === '__unfile__' ? '' : val;
+  const batch = writeBatch(db);
+  picked.forEach(id => batch.update(doc(db, 'places', id), { tripId }));
+  await batch.commit();
+  setMode('view');
 };
 
 // ══════════════════════════════════════
@@ -791,12 +788,29 @@ window.setViewMode = function(vm) {
 // ══════════════════════════════════════
 // Render List
 // ══════════════════════════════════════
+// ── List search ──
+window.onListSearch = function() {
+  listSearchText = document.getElementById('list-search').value.trim().toLowerCase();
+  document.getElementById('list-search-clear').classList.toggle('hidden', !listSearchText);
+  renderList();
+};
+window.clearListSearch = function() {
+  document.getElementById('list-search').value = '';
+  listSearchText = '';
+  document.getElementById('list-search-clear').classList.add('hidden');
+  renderList();
+};
+function matchesSearch(name) {
+  return !listSearchText || String(name || '').toLowerCase().includes(listSearchText);
+}
+
 function renderList() {
   if (viewMode === 'trips') { renderTripsTree(); renderStats(); return; }
 
   const list = document.getElementById('content-list');
   if (activeTab === 'places') {
-    const f = currentFilter === '全部' ? places : places.filter(p => p.tag === currentFilter);
+    let f = currentFilter === '全部' ? places : places.filter(p => p.tag === currentFilter);
+    f = f.filter(p => matchesSearch(p.name));
     if (f.length === 0) {
       list.innerHTML = '<div class="list-empty">尚無地點記錄<br>用上方搜尋列或「新增」按鈕加入地點</div>';
     } else {
@@ -804,10 +818,11 @@ function renderList() {
       list.innerHTML = f.map(p => placeItemHtml(p, currentFilter === '全部' ? 'all' : null)).join('');
     }
   } else {
-    if (routes.length === 0) {
+    const fr = routes.filter(r => matchesSearch(r.name));
+    if (fr.length === 0) {
       list.innerHTML = '<div class="list-empty">尚無路線記錄<br>用上方搜尋列規劃路線，或手動畫路線</div>';
     } else {
-      list.innerHTML = routes.map(r => routeItemHtml(r, 'all')).join('');
+      list.innerHTML = fr.map(r => routeItemHtml(r, 'all')).join('');
     }
   }
   renderStats();
@@ -815,25 +830,26 @@ function renderList() {
 
 function placeItemHtml(p, scope) {
   const sel = selectedPlaceId === p.id;
+  const selecting = mode === 'delete' || mode === 'batch';  // both show checkboxes
   const delSel = deleteSelected.has(`place:${p.id}`);
   const color = placeColor(p);
   const iconKey = placeIcon(p);
   const wishBadge = p.wishlist ? `<span class="wish-badge">想去</span>` : '';
   const fav = !!p.favorite;
-  const heart = mode === 'delete' ? '' :
+  const heart = selecting ? '' :
     `<button class="fav-btn${fav ? ' active' : ''}" title="${fav ? '取消收藏' : '加入我的最愛'}" onclick="event.stopPropagation();toggleFavorite('${p.id}')">
       <svg class="icon"><use href="#icon-heart-${fav ? 'filled' : 'outline'}"/></svg>
     </button>`;
-  const dragAttrs = mode === 'delete' ? '' :
-    `draggable="true" data-item-kind="place" data-item-id="${p.id}" data-scope="${scope || 'all'}"
-     ondragstart="onItemDragStart(event)" ondragover="onItemDragOver(event)" ondrop="onItemDrop(event)" ondragend="onItemDragEnd(event)"`;
-  return `<div class="place-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" ${dragAttrs} onclick="selectPlace('${p.id}')">
-    ${mode === 'delete' ? `<div class="delete-checkbox${delSel ? ' checked' : ''}"></div>` : ''}
+  const dataAttrs = `data-item-kind="place" data-item-id="${p.id}" data-scope="${scope || 'all'}"`;
+  const dragAttrs = (selecting || !scope) ? '' :
+    `draggable="true" ondragstart="onItemDragStart(event)" ondragover="onItemDragOver(event)" ondrop="onItemDrop(event)" ondragend="onItemDragEnd(event)"`;
+  return `<div class="place-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" ${dataAttrs} ${dragAttrs} onclick="selectPlace('${p.id}')">
+    ${selecting ? `<div class="delete-checkbox${delSel ? ' checked' : ''}"></div>` : ''}
     ${heart}
     <div class="place-icon" style="background:${color};"><svg class="icon" style="color:#fff;"><use href="#pin-${iconKey}"/></svg></div>
     <div class="place-info">
       <div class="place-name">${esc(p.name)}${wishBadge}</div>
-      <div class="place-meta">${p.date || ''}</div>
+      <div class="place-meta">${p.date || ''}${p.rating ? ` <span style="color:#F1B807;">${'★'.repeat(p.rating)}</span>` : ''}</div>
       <span class="place-tag" style="background:${color}1f;color:${color};">${p.tag}</span>
     </div>
   </div>`;
@@ -886,10 +902,10 @@ function routeItemHtml(r, scope) {
     </button>`;
   const editBtn = mode === 'delete' ? '' :
     `<button class="route-edit-btn" title="編輯路線" onclick="event.stopPropagation();editRoute('${r.id}')"><svg class="icon"><use href="#icon-edit"/></svg></button>`;
-  const dragAttrs = mode === 'delete' ? '' :
-    `draggable="true" data-item-kind="route" data-item-id="${r.id}" data-scope="${scope || 'all'}"
-     ondragstart="onItemDragStart(event)" ondragover="onItemDragOver(event)" ondrop="onItemDrop(event)" ondragend="onItemDragEnd(event)"`;
-  return `<div class="route-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" ${dragAttrs} onclick="selectRoute('${r.id}')">
+  const dataAttrs = `data-item-kind="route" data-item-id="${r.id}" data-scope="${scope || 'all'}"`;
+  const dragAttrs = (mode === 'delete' || !scope) ? '' :
+    `draggable="true" ondragstart="onItemDragStart(event)" ondragover="onItemDragOver(event)" ondrop="onItemDrop(event)" ondragend="onItemDragEnd(event)"`;
+  return `<div class="route-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" ${dataAttrs} ${dragAttrs} onclick="selectRoute('${r.id}')">
     ${mode === 'delete' ? `<div class="delete-checkbox${delSel ? ' checked' : ''}"></div>` : ''}
     ${heart}
     <div class="route-swatch" style="background:${color};"></div>
@@ -905,9 +921,11 @@ function routeItemHtml(r, scope) {
 // Render the year → trip → items tree
 function renderTripsTree() {
   const list = document.getElementById('content-list');
-  const wishPlaces = places.filter(p => p.wishlist);
-  const favPlaces = places.filter(p => p.favorite);
-  const realPlaces = places.filter(p => !p.wishlist);  // visited/normal places
+  const sPlaces = places.filter(p => matchesSearch(p.name));
+  const sRoutes = routes.filter(r => matchesSearch(r.name));
+  const wishPlaces = sPlaces.filter(p => p.wishlist);
+  const favPlaces = sPlaces.filter(p => p.favorite);
+  const realPlaces = sPlaces.filter(p => !p.wishlist);  // visited/normal places
 
   if (trips.length === 0 && realPlaces.every(p => !p.tripId) && routes.every(r => !r.tripId) && wishPlaces.length === 0 && favPlaces.length === 0) {
     list.innerHTML = '<div class="list-empty">尚無行程<br>點上方「新增行程」建立你的第一個行程<br>或在新增地點時勾選「想去的地方」</div>';
@@ -977,7 +995,7 @@ function renderTripsTree() {
       byYear[y].forEach(t => {
         // Visited places only (wishlist places live in their own group)
         const tripPlaces = realPlaces.filter(p => p.tripId === t.id);
-        const tripRoutes = routes.filter(r => r.tripId === t.id);
+        const tripRoutes = sRoutes.filter(r => r.tripId === t.id);
         const expanded = selectedTripId === t.id;
         const dateStr = t.start ? (t.end && t.end !== t.start ? `${t.start} ~ ${t.end}` : t.start) : '';
         html += `<div class="trip-folder" draggable="true" data-trip-id="${t.id}" data-year="${y}"
@@ -1012,7 +1030,7 @@ function renderTripsTree() {
 
   // Unfiled (no trip, visited only) section
   const unfiledPlaces = realPlaces.filter(p => !p.tripId);
-  const unfiledRoutes = routes.filter(r => !r.tripId);
+  const unfiledRoutes = sRoutes.filter(r => !r.tripId);
   if (unfiledPlaces.length > 0 || unfiledRoutes.length > 0) {
     const collapsed = collapsedYears.has('__unfiled__');
     html += `<div class="year-group">
@@ -1082,7 +1100,9 @@ window.onTripDrop = async function(e, targetId, year) {
   // Move dragged item to the target position
   ids.splice(to, 0, ids.splice(from, 1)[0]);
   // Persist new order (index-based) for every trip in this year
-  await Promise.all(ids.map((id, idx) => updateTrip(id, { order: idx })));
+  const batch = writeBatch(db);
+  ids.forEach((id, idx) => batch.update(doc(db, 'trips', id), { order: idx }));
+  await batch.commit();
   dragTripId = null; dragTripYear = null;
 };
 window.onTripDragEnd = function(e) {
@@ -1130,7 +1150,6 @@ window.onItemDragEnd = function(e) {
 // Build the ordered id-list for a kind+scope, move dragged before target, persist order
 async function reorderItems(kind, scope, dragId, targetId) {
   const arr = kind === 'place' ? places : routes;
-  const update = kind === 'place' ? updatePlace : updateRoute;
   // Determine which items belong to this scope
   const inScope = (item) => {
     if (scope === 'all') return true;
@@ -1146,7 +1165,10 @@ async function reorderItems(kind, scope, dragId, targetId) {
   const to = ids.indexOf(targetId);
   if (from === -1 || to === -1) return;
   ids.splice(to, 0, ids.splice(from, 1)[0]);
-  await Promise.all(ids.map((id, idx) => update(id, { order: idx })));
+  const coll = kind === 'place' ? 'places' : 'routes';
+  const batch = writeBatch(db);
+  ids.forEach((id, idx) => batch.update(doc(db, coll, id), { order: idx }));
+  await batch.commit();
 }
 
 function renderStats() {
@@ -1189,7 +1211,7 @@ function tripDayList(trip) {
   const end = new Date((trip.end || trip.start) + 'T00:00:00');
   if (isNaN(start) || isNaN(end) || end < start) return trip.start ? [trip.start] : [];
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    days.push(d.toISOString().slice(0, 10));
+    days.push(fmtDate(d));
   }
   return days;
 }
@@ -1283,8 +1305,10 @@ window.saveTrip = async function() {
 window.deleteTripById = async function(id) {
   if (!id) return;
   if (!confirm('確定刪除這個行程嗎？行程內的地點和路線會變回「未分類」，不會被刪除。')) return;
-  for (const p of places.filter(x => x.tripId === id)) await updatePlace(p.id, { tripId: '' });
-  for (const r of routes.filter(x => x.tripId === id)) await updateRoute(r.id, { tripId: '' });
+  const batch = writeBatch(db);
+  places.filter(x => x.tripId === id).forEach(p => batch.update(doc(db, 'places', p.id), { tripId: '' }));
+  routes.filter(x => x.tripId === id).forEach(r => batch.update(doc(db, 'routes', r.id), { tripId: '' }));
+  await batch.commit();
   await deleteTrip(id);
   if (selectedTripId === id) selectedTripId = null;
   closeTripModal();
@@ -1299,8 +1323,11 @@ function openAddModal(prefillName) {
   document.getElementById('modal-title').textContent = '新增地點';
   document.getElementById('f-name').value = prefillName || '';
   document.getElementById('f-note').value = '';
-  document.getElementById('f-photo').value = '';
-  document.getElementById('f-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('f-gmaps-url').value = '';
+  document.getElementById('f-gmaps-hint').classList.add('hidden');
+  pendingRating = 0; renderRatingPicker();
+  pendingPhotos = []; renderPhotoInputs();
+  document.getElementById('f-date').value = localToday();
   document.getElementById('f-tag').value = '美食';
   document.getElementById('f-wishlist').checked = false;
   applyWishlistUI(false);
@@ -1344,6 +1371,67 @@ function renderColorPicker() {
 window.pickIcon = function(key) { pendingIcon = key; renderIconPicker(); };
 window.pickColor = function(c) { pendingColor = c; renderColorPicker(); };
 
+// ── Rating picker (0-5 stars) ──
+function renderRatingPicker() {
+  const wrap = document.getElementById('f-rating');
+  let html = '';
+  for (let i = 1; i <= 5; i++) {
+    html += `<svg class="icon star-choice${i <= pendingRating ? ' on' : ''}" onclick="pickRating(${i})"><use href="#icon-star-${i <= pendingRating ? 'filled' : 'outline'}"/></svg>`;
+  }
+  html += `<span class="rating-clear" onclick="pickRating(0)">清除</span>`;
+  wrap.innerHTML = html;
+}
+window.pickRating = function(n) { pendingRating = (n === pendingRating) ? 0 : n; renderRatingPicker(); };
+
+// ── Multi-photo URL inputs (max 5) ──
+function renderPhotoInputs() {
+  const wrap = document.getElementById('f-photos');
+  let html = pendingPhotos.map((url, i) =>
+    `<div class="photo-input-row">
+      <input type="text" value="${esc(url)}" placeholder="貼上圖片連結 https://..." oninput="updatePhotoUrl(${i}, this.value)">
+      <button type="button" class="photo-del" onclick="removePhotoInput(${i})">✕</button>
+    </div>`
+  ).join('');
+  if (pendingPhotos.length < 5) {
+    html += `<button type="button" class="photo-add" onclick="addPhotoInput()">＋ 新增照片</button>`;
+  }
+  wrap.innerHTML = html;
+}
+window.addPhotoInput = function() { if (pendingPhotos.length < 5) { pendingPhotos.push(''); renderPhotoInputs(); } };
+window.removePhotoInput = function(i) { pendingPhotos.splice(i, 1); renderPhotoInputs(); };
+window.updatePhotoUrl = function(i, v) { pendingPhotos[i] = v; };  // no re-render (keeps focus)
+
+// Parse a full Google Maps URL to extract coordinates (and name if present)
+window.parseGmapsUrl = function() {
+  const url = document.getElementById('f-gmaps-url').value.trim();
+  const hint = document.getElementById('f-gmaps-hint');
+  const show = (msg, ok) => { hint.textContent = msg; hint.classList.remove('hidden'); hint.style.color = ok ? '#27500A' : '#C0392B'; };
+  if (!url) { show('請先貼上網址', false); return; }
+  // Short links can't be resolved from the browser (redirect + CORS)
+  if (/maps\.app\.goo\.gl|goo\.gl\/maps/.test(url)) {
+    show('短連結無法解析。請在電腦版 Google Maps 開啟該地點，複製網址列上含 @座標 的完整網址。', false);
+    return;
+  }
+  // Try several coordinate patterns: !3dLAT!4dLNG (most accurate), @LAT,LNG, q=LAT,LNG, ll=LAT,LNG
+  let lat, lng;
+  let m = url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);
+  if (m) { lat = +m[1]; lng = +m[2]; }
+  if (lat == null) { m = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/); if (m) { lat = +m[1]; lng = +m[2]; } }
+  if (lat == null) { m = url.match(/[?&](?:q|ll|query)=(-?\d+\.\d+),(-?\d+\.\d+)/); if (m) { lat = +m[1]; lng = +m[2]; } }
+  if (lat == null || lng == null) {
+    show('找不到座標。請確認網址是電腦版含 @緯度,經度 的完整網址。', false);
+    return;
+  }
+  pendingLatLng = { lat, lng };
+  // Try to pull a place name from the /place/NAME/ segment
+  const nameMatch = url.match(/\/place\/([^/@]+)/);
+  if (nameMatch && !document.getElementById('f-name').value.trim()) {
+    try { document.getElementById('f-name').value = decodeURIComponent(nameMatch[1].replace(/\+/g, ' ')); } catch (_) {}
+  }
+  show(`已帶入座標：${lat.toFixed(5)}, ${lng.toFixed(5)}`, true);
+  if (map) map.panTo({ lat, lng });
+};
+
 // When category changes, update icon/color to that category's defaults
 // (only if the user hasn't been manually overriding — simplest: always snap to new category default)
 window.onTagChange = function() {
@@ -1362,7 +1450,8 @@ window.savePlace = async function() {
     tag:   document.getElementById('f-tag').value,
     date:  getPlaceDateValue(),
     note:  document.getElementById('f-note').value.trim(),
-    photo: document.getElementById('f-photo').value.trim(),
+    photos: pendingPhotos.map(u => u.trim()).filter(Boolean).slice(0, 5),
+    rating: pendingRating || 0,
     icon:  pendingIcon,
     color: pendingColor,
     tripId: document.getElementById('f-trip').value || '',
@@ -1412,7 +1501,7 @@ window.exportData = function() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `jpmap-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `jpmap-backup-${localToday()}.json`;
   document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
 };
@@ -1455,12 +1544,6 @@ window.importData = async function(e) {
   }
 };
 
-// Firestore rejects undefined values; drop them
-function stripUndefined(obj) {
-  const out = {};
-  Object.keys(obj).forEach(k => { if (obj[k] !== undefined) out[k] = obj[k]; });
-  return out;
-}
 
 function renderStatsContent() {
   const visited = places.filter(p => !p.wishlist);
@@ -1719,7 +1802,7 @@ function openRouteDetailsModal(defaultName) {
   document.getElementById('rd-name').value = defaultName || '';
   document.getElementById('rd-cat').value = ROUTE_CATEGORIES[0];
   document.getElementById('rd-transport').value = pendingRoute.transport;
-  document.getElementById('rd-date').value = new Date().toISOString().split('T')[0];
+  document.getElementById('rd-date').value = localToday();
   document.getElementById('rd-note').value = '';
   document.getElementById('rd-fare').value = '';
   // Default route color = the transport's default color, but user can change it
@@ -1890,9 +1973,46 @@ window.zoomOut = function() { if (map) map.setZoom(map.getZoom() - 1); };
 window.recenterMap = function() { if (map) { map.panTo({ lat: 36.2, lng: 138.5 }); map.setZoom(5); } };
 
 // ── Expose globals ──
+// ── Keyboard shortcuts ──
+// Esc: close the topmost open overlay / cancel manual draw / clear search focus
+// Enter: submit the open modal (when focus is in a text/date input, not a textarea)
+const MODAL_SUBMITS = {
+  'add-modal': 'savePlace', 'trip-modal': 'saveTrip', 'route-details-modal': 'saveRouteDetails',
+};
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    if (manualDraw) { window.cancelManualDraw(); return; }
+    if (altPickerData) { window.closeRouteAltModal(); return; }
+    // Close whichever overlay is open (top-most wins by order below)
+    const overlays = [
+      ['add-modal', 'closeModal'], ['trip-modal', 'closeTripModal'],
+      ['route-details-modal', 'closeRouteDetailsModal'], ['stats-overlay', 'closeStats'],
+      ['settings-overlay', 'closeSettings'], ['import-overlay', 'closeImport'],
+    ];
+    for (const [id, fn] of overlays) {
+      const el = document.getElementById(id);
+      if (el && !el.classList.contains('hidden')) { if (window[fn]) window[fn](); return; }
+    }
+    const rpm = document.getElementById('route-point-menu');
+    if (rpm && !rpm.classList.contains('hidden')) { window.closeRoutePointMenu(); return; }
+    const info = document.getElementById('info-panel');
+    if (info && !info.classList.contains('hidden')) { window.closeInfoPanel(); return; }
+    const poi = document.getElementById('poi-card');
+    if (poi && !poi.classList.contains('hidden') && window.closePoiCard) { window.closePoiCard(); return; }
+  } else if (e.key === 'Enter' && e.target && (e.target.tagName === 'INPUT') && e.target.type !== 'checkbox') {
+    // Submit the modal that contains the focused input
+    for (const [id, fn] of Object.entries(MODAL_SUBMITS)) {
+      const modal = document.getElementById(id);
+      if (modal && !modal.classList.contains('hidden') && modal.contains(e.target)) {
+        e.preventDefault();
+        if (window[fn]) window[fn]();
+        return;
+      }
+    }
+  }
+});
+
 window.selectPlace = selectPlace;
 window.selectRoute = selectRoute;
 
-function esc(str) {
-  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-}
+

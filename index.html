@@ -109,6 +109,11 @@
       </div>
 
       <!-- View mode: 全部 (flat) vs 行程 (grouped by year) -->
+      <div id="list-search-row">
+        <svg class="icon"><use href="#icon-search"/></svg>
+        <input type="text" id="list-search" placeholder="搜尋已存的地點 / 路線名稱" oninput="onListSearch()">
+        <button id="list-search-clear" class="hidden" onclick="clearListSearch()">✕</button>
+      </div>
       <div id="view-mode-bar">
         <button id="vm-all" class="active" onclick="setViewMode('all')">全部</button>
         <button id="vm-trips" onclick="setViewMode('trips')">依年份 / 行程</button>
@@ -243,6 +248,7 @@
   <div id="info-meta"></div>
   <div id="info-photos" class="hidden"></div>
   <div id="info-note" class="note-box"></div>
+  <button id="mark-visited-btn" class="hidden" onclick="markAsVisited()"><svg class="icon"><use href="#icon-heart-filled"/></svg> 標記為已去</button>
   <div class="info-actions">
     <button onclick="editSelectedPlace()"><svg class="icon"><use href="#icon-edit"/></svg> 編輯</button>
     <button onclick="deleteSelectedPlace()" class="danger"><svg class="icon"><use href="#icon-trash"/></svg> 刪除</button>
