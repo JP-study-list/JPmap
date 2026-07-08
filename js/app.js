@@ -59,6 +59,7 @@ let pendingPhotos = [];          // photo URLs in place modal (max 5)
 let topTransport = 'drive';       // for top search bar route mode
 let routeClickTarget = null;      // pending {lat,lng,label} when picking origin/dest from map in route mode
 let routeOriginCoord = null, routeDestCoord = null;  // precise coords when origin/dest picked from map
+let routePickTarget = null;       // 'origin'|'dest' — armed field waiting for a sidebar place pick
 let pendingRoute = null;          // computed route awaiting details-form confirmation
 let pendingRouteColor = '#378ADD';  // selected color in route details modal
 let editingRouteId = null;        // set when editing an existing route via the details modal
@@ -368,8 +369,8 @@ function setupAutocompleteInput(inputId, resultsId, onPredictionSelected, textOn
   input.addEventListener('input', () => {
     clearTimeout(t);
     // If the user manually edits a route input, drop any map-picked coordinate for that field
-    if (inputId === 'top-r-origin') routeOriginCoord = null;
-    if (inputId === 'top-r-dest') routeDestCoord = null;
+    if (inputId === 'top-r-origin') { routeOriginCoord = null; clearRoutePick(); }
+    if (inputId === 'top-r-dest') { routeDestCoord = null; clearRoutePick(); }
     const val = input.value.trim();
     if (!val) { results.classList.add('hidden'); return; }
     t = setTimeout(() => fetchSuggestions(val, results, input, onPredictionSelected, textOnly), 280);
@@ -428,7 +429,22 @@ async function fetchSuggestions(val, results, input, onPredictionSelected, textO
   }
 }
 
+// Arm an origin/dest field: the next sidebar place click fills it
+window.armRoutePick = function(which) {
+  if (searchMode !== 'route') return;
+  routePickTarget = which;
+  document.getElementById('top-r-origin').classList.toggle('picking', which === 'origin');
+  document.getElementById('top-r-dest').classList.toggle('picking', which === 'dest');
+};
+function clearRoutePick() {
+  routePickTarget = null;
+  const o = document.getElementById('top-r-origin'), d = document.getElementById('top-r-dest');
+  if (o) o.classList.remove('picking');
+  if (d) d.classList.remove('picking');
+}
+
 window.setSearchMode = function(m) {
+  if (m !== 'route') clearRoutePick();
   searchMode = m;
   document.getElementById('smode-place').classList.toggle('active', m === 'place');
   document.getElementById('smode-route').classList.toggle('active', m === 'route');
@@ -571,6 +587,18 @@ function clearMap() {
 // ══════════════════════════════════════
 function selectPlace(id) {
   if (mode === 'delete' || mode === 'batch') { toggleDeleteItem('place', id); return; }
+  // Route-pick mode: clicking a sidebar place fills the armed origin/dest field
+  if (searchMode === 'route' && routePickTarget) {
+    const p = places.find(x => x.id === id);
+    if (p) {
+      const input = document.getElementById(routePickTarget === 'origin' ? 'top-r-origin' : 'top-r-dest');
+      input.value = p.name;
+      if (routePickTarget === 'origin') routeOriginCoord = { lat: p.lat, lng: p.lng };
+      else routeDestCoord = { lat: p.lat, lng: p.lng };
+      clearRoutePick();
+    }
+    return;
+  }
   selectedPlaceId = id; selectedRouteId = null;
   const p = places.find(x => x.id === id);
   if (!p) return;

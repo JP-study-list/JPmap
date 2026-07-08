@@ -142,6 +142,7 @@ input, select, textarea { font-family: inherit; }
 .tool-btn:hover { background: #f5f5f5; }
 .tool-btn.active { background: #E6F1FB; border-color: #378ADD; color: #0C447C; }
 .tool-btn.delete-mode { background: #FEF0F0; border-color: #E57373; color: #C0392B; }
+#top-r-origin.picking, #top-r-dest.picking { border-color: #185FA5 !important; box-shadow: 0 0 0 2px rgba(24,95,165,0.18); }
 #list-search-row { display: flex; align-items: center; gap: 7px; padding: 8px 12px; border-bottom: 0.5px solid #ebebeb; flex-shrink: 0; }
 #list-search-row .icon { width: 14px; height: 14px; color: #aaa; flex-shrink: 0; }
 #list-search { flex: 1; border: none; outline: none; font-size: 13px; background: transparent; color: #1a1a1a; }

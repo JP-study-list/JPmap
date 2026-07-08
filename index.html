@@ -203,12 +203,12 @@
       <div id="search-route-row" class="hidden">
         <div style="position:relative;">
           <span class="route-dot origin-dot"></span>
-          <input type="text" id="top-r-origin" placeholder="起點" autocomplete="off">
+          <input type="text" id="top-r-origin" placeholder="起點（可點左側地標帶入）" autocomplete="off" onfocus="armRoutePick('origin')">
           <div id="top-origin-results" class="hidden search-results-dropdown"></div>
         </div>
         <div style="position:relative;margin-top:6px;">
           <span class="route-dot dest-dot"></span>
-          <input type="text" id="top-r-dest" placeholder="終點" autocomplete="off">
+          <input type="text" id="top-r-dest" placeholder="終點（可點左側地標帶入）" autocomplete="off" onfocus="armRoutePick('dest')">
           <div id="top-dest-results" class="hidden search-results-dropdown"></div>
         </div>
         <div id="top-route-transport">
