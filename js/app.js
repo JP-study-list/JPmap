@@ -47,7 +47,8 @@ let markers = {}, polylines = {};
 let mode = 'view', activeTab = 'places', currentFilter = '全部';
 let viewMode = 'all';            // 'all' (flat) | 'trips' (grouped by year)
 let selectedTripId = null;       // currently expanded/selected trip in trips view
-let collapsedYears = new Set();  // which year groups are collapsed
+let expandedGroups = new Set(); // which groups are expanded (default: ALL collapsed for a clean trips view)
+let hiddenTripIds = new Set();  // trips whose markers/routes are hidden via the eye toggle (session only)
 let selectedPlaceId = null, selectedRouteId = null;
 let editingPlaceId = null, pendingLatLng = null;
 let editingTripId = null;        // for trip create/edit modal
@@ -502,8 +503,9 @@ function syncPlaceMarkers() {
     const iconKey = placeIcon(p);
     const color = placeColor(p);
     const icon = buildMarkerIcon(iconKey, color, sel ? scale * 1.35 : scale);
-    if (markers[p.id]) { markers[p.id].setIcon(icon); markers[p.id].setZIndex(sel ? 999 : 1); return; }
-    const marker = new google.maps.Marker({ position: { lat: p.lat, lng: p.lng }, map, title: p.name, icon, zIndex: sel ? 999 : 1 });
+    const targetMap = (p.tripId && hiddenTripIds.has(p.tripId)) ? null : map;
+    if (markers[p.id]) { markers[p.id].setIcon(icon); markers[p.id].setZIndex(sel ? 999 : 1); markers[p.id].setMap(targetMap); return; }
+    const marker = new google.maps.Marker({ position: { lat: p.lat, lng: p.lng }, map: targetMap, title: p.name, icon, zIndex: sel ? 999 : 1 });
     marker.addListener('click', () => selectPlace(p.id));
     markers[p.id] = marker;
   });
@@ -516,7 +518,7 @@ function syncRoutePolylines() {
     const t = TRANSPORT[r.transport] || TRANSPORT.drive;
     const color = routeColor(r);
     const sel = selectedRouteId === r.id;
-    const targetMap = routesHidden ? null : map;
+    const targetMap = (routesHidden || (r.tripId && hiddenTripIds.has(r.tripId))) ? null : map;
     if (polylines[r.id]) {
       polylines[r.id].setMap(targetMap);
       polylines[r.id].setOptions({ strokeColor: color, strokeWeight: sel ? 5 : 3, strokeOpacity: sel ? 1 : 0.75 });
@@ -578,14 +580,9 @@ function selectPlace(id) {
   document.getElementById('info-meta').innerHTML =
     `<span style="display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;background:${color}22;color:${color};margin-right:6px;">${p.tag}</span>${p.date || ''}${stars}`;
   document.getElementById('info-note').textContent = p.note || '（尚無筆記）';
-  const photos = Array.isArray(p.photos) ? p.photos : (p.photo ? [p.photo] : []);
-  const gallery = document.getElementById('info-photos');
-  if (photos.length) {
-    gallery.innerHTML = photos.map(u => `<img src="${esc(u)}" alt="地點照片" onerror="this.style.display='none'">`).join('');
-    gallery.classList.remove('hidden');
-  } else {
-    gallery.classList.add('hidden'); gallery.innerHTML = '';
-  }
+  infoPhotos = Array.isArray(p.photos) ? p.photos : (p.photo ? [p.photo] : []);
+  infoPhotoIdx = 0;
+  renderInfoCarousel();
   // Show "mark as visited" button only for wishlist places
   const visitedBtn = document.getElementById('mark-visited-btn');
   if (visitedBtn) visitedBtn.classList.toggle('hidden', !p.wishlist);
@@ -597,6 +594,41 @@ function selectPlace(id) {
   const bounds = map.getBounds();
   if (!bounds || !bounds.contains(pos)) map.panTo(pos);
 }
+
+// ── Info panel photo carousel ──
+let infoPhotos = [], infoPhotoIdx = 0;
+function renderInfoCarousel() {
+  const gallery = document.getElementById('info-photos');
+  if (!infoPhotos.length) { gallery.classList.add('hidden'); gallery.innerHTML = ''; return; }
+  const multi = infoPhotos.length > 1;
+  const dots = multi
+    ? `<div class="carousel-dots">${infoPhotos.map((_, i) => `<span class="dot${i === infoPhotoIdx ? ' on' : ''}"></span>`).join('')}</div>`
+    : '';
+  gallery.innerHTML = `
+    <div class="carousel">
+      ${multi ? '<button class="car-nav prev" onclick="infoPhotoNav(-1)">‹</button>' : ''}
+      <img src="${esc(infoPhotos[infoPhotoIdx])}" alt="地點照片" onerror="this.style.display='none'">
+      ${multi ? '<button class="car-nav next" onclick="infoPhotoNav(1)">›</button>' : ''}
+    </div>${dots}`;
+  gallery.classList.remove('hidden');
+  // Touch swipe (mobile)
+  if (multi) {
+    const car = gallery.querySelector('.carousel');
+    let sx = null;
+    car.addEventListener('touchstart', (e) => { sx = e.touches[0].clientX; }, { passive: true });
+    car.addEventListener('touchend', (e) => {
+      if (sx === null) return;
+      const dx = e.changedTouches[0].clientX - sx;
+      if (Math.abs(dx) > 40) window.infoPhotoNav(dx < 0 ? 1 : -1);
+      sx = null;
+    }, { passive: true });
+  }
+}
+window.infoPhotoNav = function(dir) {
+  if (!infoPhotos.length) return;
+  infoPhotoIdx = (infoPhotoIdx + dir + infoPhotos.length) % infoPhotos.length;
+  renderInfoCarousel();
+};
 
 // One-click: convert a wishlist place to "visited"
 window.markAsVisited = async function() {
@@ -936,7 +968,7 @@ function renderTripsTree() {
 
   // ── 我的最愛 group (all favorited places) ──
   if (favPlaces.length > 0) {
-    const collapsed = collapsedYears.has('__favorite__');
+    const collapsed = !expandedGroups.has('__favorite__');
     html += `<div class="year-group">
       <div class="favorite-header${collapsed ? ' collapsed' : ''}" onclick="toggleYear('__favorite__')">
         <svg class="icon chev"><use href="#icon-chevron-left"/></svg>
@@ -952,7 +984,7 @@ function renderTripsTree() {
 
   // ── 想去的地方 group (all wishlist places, regardless of their tripId) ──
   if (wishPlaces.length > 0) {
-    const collapsed = collapsedYears.has('__wishlist__');
+    const collapsed = !expandedGroups.has('__wishlist__');
     html += `<div class="year-group">
       <div class="wishlist-header${collapsed ? ' collapsed' : ''}" onclick="toggleYear('__wishlist__')">
         <svg class="icon chev"><use href="#icon-chevron-left"/></svg>
@@ -984,7 +1016,7 @@ function renderTripsTree() {
   }));
 
   years.forEach(y => {
-    const collapsed = collapsedYears.has(y);
+    const collapsed = !expandedGroups.has(y);
     html += `<div class="year-group">
       <div class="year-header${collapsed ? ' collapsed' : ''}" onclick="toggleYear('${y}')">
         <svg class="icon chev"><use href="#icon-chevron-left"/></svg>
@@ -1010,6 +1042,7 @@ function renderTripsTree() {
               <div class="trip-name">${esc(t.name)}</div>
               <div class="trip-dates">${dateStr} · ${tripPlaces.length} 地點 / ${tripRoutes.length} 路線</div>
             </div>
+            <button class="trip-eye-btn${hiddenTripIds.has(t.id) ? ' off' : ''}" title="${hiddenTripIds.has(t.id) ? '顯示此行程的地標/路線' : '隱藏此行程的地標/路線'}" onclick="event.stopPropagation();toggleTripVisibility('${t.id}')"><svg class="icon"><use href="#icon-eye${hiddenTripIds.has(t.id) ? '-off' : ''}"/></svg></button>
             <button class="trip-edit-btn" onclick="event.stopPropagation();editTrip('${t.id}')"><svg class="icon"><use href="#icon-edit"/></svg></button>
           </div>`;
         if (expanded) {
@@ -1032,7 +1065,7 @@ function renderTripsTree() {
   const unfiledPlaces = realPlaces.filter(p => !p.tripId);
   const unfiledRoutes = sRoutes.filter(r => !r.tripId);
   if (unfiledPlaces.length > 0 || unfiledRoutes.length > 0) {
-    const collapsed = collapsedYears.has('__unfiled__');
+    const collapsed = !expandedGroups.has('__unfiled__');
     html += `<div class="year-group">
       <div class="unfiled-header${collapsed ? ' collapsed' : ''}" onclick="toggleYear('__unfiled__')">
         <svg class="icon chev"><use href="#icon-chevron-left"/></svg>
@@ -1050,13 +1083,22 @@ function renderTripsTree() {
 }
 
 window.toggleYear = function(y) {
-  if (collapsedYears.has(y)) collapsedYears.delete(y);
-  else collapsedYears.add(y);
+  if (expandedGroups.has(y)) expandedGroups.delete(y);
+  else expandedGroups.add(y);
   renderTripsTree();
 };
 
 window.toggleTrip = function(id) {
   selectedTripId = selectedTripId === id ? null : id;
+  renderTripsTree();
+};
+
+// Eye toggle: show/hide all markers & routes of a trip (session-only, not saved)
+window.toggleTripVisibility = function(id) {
+  if (hiddenTripIds.has(id)) hiddenTripIds.delete(id);
+  else hiddenTripIds.add(id);
+  syncPlaceMarkers();
+  syncRoutePolylines();
   renderTripsTree();
 };
 

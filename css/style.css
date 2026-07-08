@@ -193,9 +193,21 @@ input, select, textarea { font-family: inherit; }
 .fav-btn:hover { color: #E0245E; transform: scale(1.15); }
 .fav-btn.active { color: #E0245E; }
 .fav-btn .icon { width: 17px; height: 17px; }
-#info-photos { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
+#info-photos { margin: 10px 0; }
+.carousel { position: relative; }
+.carousel img { width: 100%; border-radius: 10px; max-height: 180px; object-fit: cover; display: block; }
+.car-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 30px; height: 30px; border: none; border-radius: 50%; background: rgba(0,0,0,0.45); color: #fff; font-size: 18px; line-height: 1; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.car-nav:hover { background: rgba(0,0,0,0.65); }
+.car-nav.prev { left: 8px; }
+.car-nav.next { right: 8px; }
+.carousel-dots { display: flex; justify-content: center; gap: 5px; margin-top: 6px; }
+.carousel-dots .dot { width: 6px; height: 6px; border-radius: 50%; background: #ddd; }
+.carousel-dots .dot.on { background: #185FA5; }
+.trip-eye-btn { background: none; border: none; color: #ccc; padding: 2px 4px; border-radius: 5px; display: flex; flex-shrink: 0; cursor: pointer; }
+.trip-eye-btn:hover { color: #555; background: #eee; }
+.trip-eye-btn.off { color: #C0392B; }
+.trip-eye-btn .icon { width: 14px; height: 14px; }
 #info-photos.hidden { display: none; }
-#info-photos img { width: calc(50% - 3px); border-radius: 8px; max-height: 130px; object-fit: cover; display: block; }
 .info-stars { color: #F1B807; margin-left: 8px; font-size: 13px; letter-spacing: 1px; }
 .rating-picker { display: flex; align-items: center; gap: 4px; }
 .star-choice { width: 24px; height: 24px; color: #ddd; cursor: pointer; transition: color 0.1s, transform 0.1s; }
