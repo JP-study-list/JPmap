@@ -367,9 +367,12 @@
       <label>路線顏色</label>
       <div id="rd-color-picker"></div>
     </div>
-    <div class="form-row"><label>日期</label><input type="date" id="rd-date"></div>
+    <div class="form-row"><label>日期</label>
+      <input type="date" id="rd-date">
+      <select id="rd-date-select" class="hidden"></select>
+    </div>
     <div class="form-row"><label>所屬行程 <span style="color:#bbb;font-weight:400;">（可不選）</span></label>
-      <select id="rd-trip"><option value="">未分類</option></select>
+      <select id="rd-trip" onchange="onRouteTripSelectChange()"><option value="">未分類</option></select>
     </div>
     <div class="form-row"><label>筆記</label><textarea id="rd-note" placeholder="記錄這條路線的感受、推薦理由..."></textarea></div>
     <div class="modal-actions">

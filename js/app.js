@@ -944,6 +944,7 @@ window.editRoute = function(id) {
   onRouteTransportChange();
   refreshRouteTripDropdown();
   document.getElementById('rd-trip').value = r.tripId || '';
+  applyRouteTripDateRange(r.date || '');
   document.querySelector('#route-details-modal h3').textContent = '編輯路線';
   document.getElementById('route-details-modal').classList.remove('hidden');
 };
@@ -1867,6 +1868,31 @@ window.cancelManualDraw = function() {
   document.getElementById('mode-indicator').classList.add('hidden');
 };
 
+// Route modal: limit date to the selected trip's day range (mirrors the place modal)
+function applyRouteTripDateRange(preferDate) {
+  const rdTrip = document.getElementById('rd-trip');
+  const dateInput = document.getElementById('rd-date');
+  const daySel = document.getElementById('rd-date-select');
+  const trip = trips.find(t => t.id === (rdTrip ? rdTrip.value : ''));
+  const days = tripDayList(trip);
+  if (trip && days.length) {
+    daySel.innerHTML = days.map(d => `<option value="${d}">${d}</option>`).join('');
+    const want = preferDate || dateInput.value;
+    daySel.value = days.includes(want) ? want : days[0];
+    daySel.classList.remove('hidden');
+    dateInput.classList.add('hidden');
+  } else {
+    daySel.classList.add('hidden');
+    dateInput.classList.remove('hidden');
+  }
+}
+window.onRouteTripSelectChange = function() { applyRouteTripDateRange(); };
+function getRouteDateValue() {
+  const daySel = document.getElementById('rd-date-select');
+  if (daySel && !daySel.classList.contains('hidden')) return daySel.value;
+  return document.getElementById('rd-date').value;
+}
+
 // ── Route details modal (filled in after a route is computed) ──
 function openRouteDetailsModal(defaultName) {
   document.getElementById('rd-name').value = defaultName || '';
@@ -1882,6 +1908,7 @@ function openRouteDetailsModal(defaultName) {
   refreshRouteTripDropdown();
   const rdTrip = document.getElementById('rd-trip');
   if (rdTrip) rdTrip.value = (viewMode === 'trips' && selectedTripId && selectedTripId !== '__wishlist__') ? selectedTripId : '';
+  applyRouteTripDateRange();
   document.getElementById('route-details-modal').classList.remove('hidden');
 }
 
@@ -1918,7 +1945,7 @@ window.saveRouteDetails = async function() {
     points: pendingRoute.points,
     cat:   document.getElementById('rd-cat').value,
     color: pendingRouteColor,
-    date:  document.getElementById('rd-date').value,
+    date:  getRouteDateValue(),
     note:  document.getElementById('rd-note').value.trim(),
     fare:  transport === 'train' ? (document.getElementById('rd-fare').value || '') : '',
     tripId: document.getElementById('rd-trip').value || '',
