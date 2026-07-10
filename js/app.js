@@ -1552,6 +1552,84 @@ window.closeModal = function() {
 window.openSettings = function() { document.getElementById('settings-overlay').classList.remove('hidden'); };
 window.closeSettings = function() { document.getElementById('settings-overlay').classList.add('hidden'); };
 
+// ── Restaurants hub: centralized view of all food/cafe places ──
+function isRestaurant(p) { return p.tag === '美食' || placeIcon(p) === 'cafe'; }
+
+window.openRestaurants = function() {
+  renderRestaurantsContent();
+  document.getElementById('restaurants-overlay').classList.remove('hidden');
+};
+window.closeRestaurants = function() { document.getElementById('restaurants-overlay').classList.add('hidden'); };
+
+function restaurantItemHtml(p) {
+  const color = placeColor(p);
+  const fav = !!p.favorite;
+  const stars = p.rating ? ` <span style="color:#F1B807;">${'★'.repeat(p.rating)}</span>` : '';
+  return `<div class="rest-item" onclick="locateRestaurant('${p.id}')">
+    <button class="fav-btn${fav ? ' active' : ''}" onclick="event.stopPropagation();toggleRestFavorite('${p.id}')">
+      <svg class="icon"><use href="#icon-heart-${fav ? 'filled' : 'outline'}"/></svg>
+    </button>
+    <div class="place-icon" style="background:${color};"><svg class="icon" style="color:#fff;"><use href="#pin-${placeIcon(p)}"/></svg></div>
+    <div style="flex:1;min-width:0;">
+      <div class="rest-name">${esc(p.name)}${p.wishlist ? '<span class="wish-badge">想去</span>' : ''}</div>
+      <div class="rest-meta">${p.date || ''}${stars}</div>
+    </div>
+  </div>`;
+}
+
+function renderRestaurantsContent() {
+  const all = places.filter(isRestaurant);
+  const wish = all.filter(p => p.wishlist);
+  const visited = all.filter(p => !p.wishlist);
+  const byTrip = {};
+  visited.filter(p => p.tripId).forEach(p => { (byTrip[p.tripId] = byTrip[p.tripId] || []).push(p); });
+  const unfiled = visited.filter(p => !p.tripId);
+
+  let html = '';
+  if (all.length === 0) {
+    html = '<div class="list-empty" style="padding:20px;">尚無餐廳類地點<br>（「美食」分類或咖啡圖示的地點會出現在這裡）</div>';
+  } else {
+    if (wish.length) {
+      html += `<div class="rest-group-title" style="color:#1a1a1a;">🖤 想去的餐廳（${wish.length}）</div>`;
+      html += wish.map(restaurantItemHtml).join('');
+    }
+    // Trips sorted by start date desc
+    const tripIds = Object.keys(byTrip).sort((a, b) => {
+      const ta = trips.find(t => t.id === a), tb = trips.find(t => t.id === b);
+      return ((tb && tb.start) || '').localeCompare((ta && ta.start) || '');
+    });
+    tripIds.forEach(tid => {
+      const t = trips.find(x => x.id === tid);
+      html += `<div class="rest-group-title">${esc(t ? t.name : '（已刪除的行程）')}（${byTrip[tid].length}）</div>`;
+      html += byTrip[tid].map(restaurantItemHtml).join('');
+    });
+    if (unfiled.length) {
+      html += `<div class="rest-group-title">未分類（${unfiled.length}）</div>`;
+      html += unfiled.map(restaurantItemHtml).join('');
+    }
+  }
+  document.getElementById('restaurants-content').innerHTML = html;
+}
+
+// Heart toggle inside the hub (re-renders the hub, not just the list)
+window.toggleRestFavorite = async function(id) {
+  const p = places.find(x => x.id === id);
+  if (!p) return;
+  await updatePlace(id, { favorite: !p.favorite });
+  // onSnapshot will refresh `places`; re-render hub shortly after
+  setTimeout(renderRestaurantsContent, 400);
+};
+
+// Click a restaurant: close the hub, locate it on the map, open its info panel
+window.locateRestaurant = function(id) {
+  closeRestaurants();
+  const p = places.find(x => x.id === id);
+  if (!p) return;
+  map.panTo({ lat: p.lat, lng: p.lng });
+  if (map.getZoom() < 14) map.setZoom(15);
+  selectPlace(id);
+};
+
 window.openStats = function() {
   renderStatsContent();
   document.getElementById('stats-overlay').classList.remove('hidden');
