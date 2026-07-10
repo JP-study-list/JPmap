@@ -228,6 +228,12 @@ input, select, textarea { font-family: inherit; }
 #btn-hide-routes.routes-off { opacity: 0.45; text-decoration: line-through; }
 .place-item.drag-over, .route-item.drag-over { border-top: 2px solid #185FA5; }
 .route-edit-btn .icon { width: 15px; height: 15px; }
+/* Restaurants hub */
+.rest-group-title { font-size: 13px; font-weight: 600; color: #185FA5; margin: 12px 0 6px; padding-bottom: 4px; border-bottom: 0.5px solid #eee; }
+.rest-item { display: flex; align-items: center; gap: 9px; padding: 8px 6px; border-radius: 9px; cursor: pointer; }
+.rest-item:hover { background: #f5f7fa; }
+.rest-name { font-size: 14px; font-weight: 500; color: #1a1a1a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rest-meta { font-size: 12px; color: #999; }
 /* Stats */
 .stat-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
 .stat-card { background: #f7f8fa; border-radius: 10px; padding: 14px 8px; text-align: center; }
@@ -357,26 +363,28 @@ input, select, textarea { font-family: inherit; }
   #map-area { width: 100%; }
   #map { width: 100%; }
 
-  /* Reopen button larger tap target */
-  #reopen-btn { width: 40px; height: 40px; top: 10px; left: 10px; }
+  /* iOS: inputs smaller than 16px trigger auto-zoom that breaks the layout */
+  input, select, textarea { font-size: 16px !important; }
+
+  /* Reopen button larger tap target, clear of the notch */
+  #reopen-btn { width: 40px; height: 40px; top: calc(10px + env(safe-area-inset-top)); left: 10px; }
   #reopen-btn .icon { width: 20px; height: 20px; }
 
-  /* Top search bar: narrower, offset for reopen button */
-  #search-bar { left: 60px !important; right: 10px; width: auto; max-width: none; }
-  #map-area:has(#reopen-btn:not(.hidden)) #search-bar { left: 60px; }
+  /* Top search bar: narrower, offset for reopen button and notch */
+  #search-bar { left: 60px !important; right: 10px; width: auto; max-width: none; top: calc(10px + env(safe-area-inset-top)); }
 
   /* Modals fill most of the screen */
-  .modal-box { width: 92vw !important; max-width: 92vw !important; max-height: 88vh; overflow-y: auto; }
+  .modal-box { width: 92vw !important; max-width: 92vw !important; max-height: 86vh; overflow-y: auto; }
 
-  /* Info panel + POI card as bottom sheets */
-  #info-panel { left: 8px; right: 8px; bottom: 8px; top: auto; width: auto; max-height: 55vh; overflow-y: auto; }
-  #poi-card { left: 8px; right: 8px; bottom: 8px; top: auto; width: auto; }
+  /* Bottom sheets: POI card / info panel / route menus.
+     IMPORTANT: reset the desktop centering transform, otherwise they get pushed off-screen. */
+  #info-panel { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); top: auto; width: auto; max-height: 55vh; overflow-y: auto; transform: none; }
+  #poi-card { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); top: auto; width: auto; transform: none; }
+  #route-alt-modal { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); top: auto; width: auto; }
+  #route-point-menu { top: auto; bottom: calc(8px + env(safe-area-inset-bottom)); left: 8px; right: 8px; width: auto; transform: none; }
 
-  /* Route alternatives panel: bottom sheet instead of top-right */
-  #route-alt-modal { left: 8px; right: 8px; bottom: 8px; top: auto; width: auto; }
-
-  /* Route point menu centered lower */
-  #route-point-menu { width: 78%; }
+  /* Manual draw toolbar above the home indicator */
+  #manual-draw-bar { bottom: calc(16px + env(safe-area-inset-bottom)); }
 
   /* Stats cards 2 columns */
   .stat-cards { grid-template-columns: repeat(2, 1fr); }
@@ -384,7 +392,4 @@ input, select, textarea { font-family: inherit; }
   /* Larger tap targets in lists */
   .place-item, .route-item { padding-top: 11px; padding-bottom: 11px; }
   .fav-btn .icon { width: 20px; height: 20px; }
-
-  /* Zoom controls & recenter shifted so they don't overlap bottom sheets */
-  #manual-draw-bar { bottom: 16px; }
 }
