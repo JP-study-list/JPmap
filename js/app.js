@@ -9,7 +9,7 @@ import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot
 import {
   firebaseConfig, TRANSPORT, ROUTE_CATEGORIES, WISHLIST_COLOR, TAG_STYLE,
   ICON_CATALOG, TAG_DEFAULT_ICON, TAG_DEFAULT_COLOR, COLOR_PALETTE, ICON_SVG_PATHS,
-  MARKER_BASE_ZOOM, MARKER_BASE_SCALE, MARKER_MIN_SCALE, MARKER_MAX_SCALE,
+  MARKER_BASE_ZOOM, MARKER_BASE_SCALE, MARKER_MIN_SCALE, MARKER_MAX_SCALE, FOOD_TYPES,
 } from './config.js';
 import { esc, placeIcon, placeColor, routeColor, byOrder, fmtDate, localToday, stripUndefined } from './helpers.js';
 
@@ -65,6 +65,8 @@ let pendingRouteColor = '#378ADD';  // selected color in route details modal
 let editingRouteId = null;        // set when editing an existing route via the details modal
 let routesHidden = false;         // when true, all route polylines are hidden on the map
 let listSearchText = '';          // sidebar list search filter (matches place/route names)
+let restaurantMode = false;       // restaurant mode: map/list show only food places, routes hidden
+let foodTypeFilter = '全部';      // active pill in the food filter bar
 let pendingImport = null;
 let sidebarOpen = true;
 let deleteSelected = new Set();
@@ -519,7 +521,8 @@ function syncPlaceMarkers() {
     const iconKey = placeIcon(p);
     const color = placeColor(p);
     const icon = buildMarkerIcon(iconKey, color, sel ? scale * 1.35 : scale);
-    const targetMap = (p.tripId && hiddenTripIds.has(p.tripId)) ? null : map;
+    let targetMap = (p.tripId && hiddenTripIds.has(p.tripId)) ? null : map;
+    if (restaurantMode) targetMap = (isRestaurant(p) && restaurantMatchesFilter(p)) ? map : null;
     if (markers[p.id]) { markers[p.id].setIcon(icon); markers[p.id].setZIndex(sel ? 999 : 1); markers[p.id].setMap(targetMap); return; }
     const marker = new google.maps.Marker({ position: { lat: p.lat, lng: p.lng }, map: targetMap, title: p.name, icon, zIndex: sel ? 999 : 1 });
     marker.addListener('click', () => selectPlace(p.id));
@@ -534,7 +537,7 @@ function syncRoutePolylines() {
     const t = TRANSPORT[r.transport] || TRANSPORT.drive;
     const color = routeColor(r);
     const sel = selectedRouteId === r.id;
-    const targetMap = (routesHidden || (r.tripId && hiddenTripIds.has(r.tripId))) ? null : map;
+    const targetMap = (restaurantMode || routesHidden || (r.tripId && hiddenTripIds.has(r.tripId))) ? null : map;
     if (polylines[r.id]) {
       polylines[r.id].setMap(targetMap);
       polylines[r.id].setOptions({ strokeColor: color, strokeWeight: sel ? 5 : 3, strokeOpacity: sel ? 1 : 0.75 });
@@ -700,6 +703,7 @@ window.editSelectedPlace = function() {
   document.getElementById('modal-title').textContent = '編輯地點';
   document.getElementById('f-name').value = p.name;
   document.getElementById('f-tag').value = p.tag || '美食';
+  applyFoodTypeRow(p.foodType || '');
   document.getElementById('f-date').value = p.date || '';
   document.getElementById('f-note').value = p.note || '';
   document.getElementById('f-gmaps-url').value = '';
@@ -865,6 +869,16 @@ function matchesSearch(name) {
 }
 
 function renderList() {
+  // Restaurant mode: sidebar shows only restaurants (filtered by pill + search)
+  if (restaurantMode) {
+    const list = document.getElementById('content-list');
+    const f = places.filter(p => isRestaurant(p) && restaurantMatchesFilter(p) && matchesSearch(p.name));
+    list.innerHTML = f.length
+      ? f.map(p => placeItemHtml(p, null)).join('')
+      : '<div class="list-empty">此分類尚無餐廳<br>新增地點時分類選「美食」並選餐廳類型</div>';
+    renderStats();
+    return;
+  }
   if (viewMode === 'trips') { renderTripsTree(); renderStats(); return; }
 
   const list = document.getElementById('content-list');
@@ -1400,6 +1414,7 @@ function openAddModal(prefillName) {
   pendingPhotos = []; renderPhotoInputs();
   document.getElementById('f-date').value = localToday();
   document.getElementById('f-tag').value = '美食';
+  applyFoodTypeRow();
   document.getElementById('f-wishlist').checked = false;
   applyWishlistUI(false);
   // New place starts with the default icon/color for the default category
@@ -1511,7 +1526,20 @@ window.onTagChange = function() {
   pendingColor = TAG_DEFAULT_COLOR[tag] || '#566573';
   renderIconPicker();
   renderColorPicker();
+  applyFoodTypeRow();
 };
+
+// Show the food-type dropdown only when tag = 美食
+function applyFoodTypeRow(selected) {
+  const row = document.getElementById('f-foodtype-row');
+  const sel = document.getElementById('f-foodtype');
+  const isFood = document.getElementById('f-tag').value === '美食';
+  row.classList.toggle('hidden', !isFood);
+  if (isFood && sel.options.length === 0) {
+    sel.innerHTML = FOOD_TYPES.map(t => `<option value="${t}">${t}</option>`).join('');
+  }
+  if (isFood) sel.value = (selected && FOOD_TYPES.includes(selected)) ? selected : '其他';
+}
 
 window.savePlace = async function() {
   const name = document.getElementById('f-name').value.trim();
@@ -1521,6 +1549,7 @@ window.savePlace = async function() {
     tag:   document.getElementById('f-tag').value,
     date:  getPlaceDateValue(),
     note:  document.getElementById('f-note').value.trim(),
+    foodType: document.getElementById('f-tag').value === '美食' ? document.getElementById('f-foodtype').value : '',
     photos: pendingPhotos.map(u => u.trim()).filter(Boolean).slice(0, 5),
     rating: pendingRating || 0,
     icon:  pendingIcon,
@@ -1552,82 +1581,38 @@ window.closeModal = function() {
 window.openSettings = function() { document.getElementById('settings-overlay').classList.remove('hidden'); };
 window.closeSettings = function() { document.getElementById('settings-overlay').classList.add('hidden'); };
 
-// ── Restaurants hub: centralized view of all food/cafe places ──
+// ── Restaurant mode: map & sidebar show only food places ──
 function isRestaurant(p) { return p.tag === '美食' || placeIcon(p) === 'cafe'; }
+// Effective sub-type: explicit foodType, else cafe icon → 咖啡廳, else 其他
+function foodTypeOf(p) { return p.foodType || (placeIcon(p) === 'cafe' ? '咖啡廳' : '其他'); }
+function restaurantMatchesFilter(p) { return foodTypeFilter === '全部' || foodTypeOf(p) === foodTypeFilter; }
 
-window.openRestaurants = function() {
-  renderRestaurantsContent();
-  document.getElementById('restaurants-overlay').classList.remove('hidden');
-};
-window.closeRestaurants = function() { document.getElementById('restaurants-overlay').classList.add('hidden'); };
-
-function restaurantItemHtml(p) {
-  const color = placeColor(p);
-  const fav = !!p.favorite;
-  const stars = p.rating ? ` <span style="color:#F1B807;">${'★'.repeat(p.rating)}</span>` : '';
-  return `<div class="rest-item" onclick="locateRestaurant('${p.id}')">
-    <button class="fav-btn${fav ? ' active' : ''}" onclick="event.stopPropagation();toggleRestFavorite('${p.id}')">
-      <svg class="icon"><use href="#icon-heart-${fav ? 'filled' : 'outline'}"/></svg>
-    </button>
-    <div class="place-icon" style="background:${color};"><svg class="icon" style="color:#fff;"><use href="#pin-${placeIcon(p)}"/></svg></div>
-    <div style="flex:1;min-width:0;">
-      <div class="rest-name">${esc(p.name)}${p.wishlist ? '<span class="wish-badge">想去</span>' : ''}</div>
-      <div class="rest-meta">${p.date || ''}${stars}</div>
-    </div>
-  </div>`;
-}
-
-function renderRestaurantsContent() {
-  const all = places.filter(isRestaurant);
-  const wish = all.filter(p => p.wishlist);
-  const visited = all.filter(p => !p.wishlist);
-  const byTrip = {};
-  visited.filter(p => p.tripId).forEach(p => { (byTrip[p.tripId] = byTrip[p.tripId] || []).push(p); });
-  const unfiled = visited.filter(p => !p.tripId);
-
-  let html = '';
-  if (all.length === 0) {
-    html = '<div class="list-empty" style="padding:20px;">尚無餐廳類地點<br>（「美食」分類或咖啡圖示的地點會出現在這裡）</div>';
-  } else {
-    if (wish.length) {
-      html += `<div class="rest-group-title" style="color:#1a1a1a;">🖤 想去的餐廳（${wish.length}）</div>`;
-      html += wish.map(restaurantItemHtml).join('');
-    }
-    // Trips sorted by start date desc
-    const tripIds = Object.keys(byTrip).sort((a, b) => {
-      const ta = trips.find(t => t.id === a), tb = trips.find(t => t.id === b);
-      return ((tb && tb.start) || '').localeCompare((ta && ta.start) || '');
-    });
-    tripIds.forEach(tid => {
-      const t = trips.find(x => x.id === tid);
-      html += `<div class="rest-group-title">${esc(t ? t.name : '（已刪除的行程）')}（${byTrip[tid].length}）</div>`;
-      html += byTrip[tid].map(restaurantItemHtml).join('');
-    });
-    if (unfiled.length) {
-      html += `<div class="rest-group-title">未分類（${unfiled.length}）</div>`;
-      html += unfiled.map(restaurantItemHtml).join('');
-    }
-  }
-  document.getElementById('restaurants-content').innerHTML = html;
-}
-
-// Heart toggle inside the hub (re-renders the hub, not just the list)
-window.toggleRestFavorite = async function(id) {
-  const p = places.find(x => x.id === id);
-  if (!p) return;
-  await updatePlace(id, { favorite: !p.favorite });
-  // onSnapshot will refresh `places`; re-render hub shortly after
-  setTimeout(renderRestaurantsContent, 400);
+window.toggleRestaurantMode = function() {
+  restaurantMode = !restaurantMode;
+  if (restaurantMode) setMode('view');  // leave pin/delete/batch modes for a clean state
+  foodTypeFilter = '全部';
+  document.getElementById('btn-restaurants').classList.toggle('active', restaurantMode);
+  document.getElementById('food-filter-bar').classList.toggle('hidden', !restaurantMode);
+  if (restaurantMode) renderFoodFilterBar();
+  syncPlaceMarkers();
+  syncRoutePolylines();
+  renderList();
 };
 
-// Click a restaurant: close the hub, locate it on the map, open its info panel
-window.locateRestaurant = function(id) {
-  closeRestaurants();
-  const p = places.find(x => x.id === id);
-  if (!p) return;
-  map.panTo({ lat: p.lat, lng: p.lng });
-  if (map.getZoom() < 14) map.setZoom(15);
-  selectPlace(id);
+// Pills: 全部 + only the types that actually exist among current restaurants
+function renderFoodFilterBar() {
+  const bar = document.getElementById('food-filter-bar');
+  const present = new Set(places.filter(isRestaurant).map(foodTypeOf));
+  const pills = ['全部', ...FOOD_TYPES.filter(t => present.has(t))];
+  bar.innerHTML = pills.map(t =>
+    `<button class="food-pill${foodTypeFilter === t ? ' active' : ''}" onclick="pickFoodType('${t}')">${t}</button>`
+  ).join('');
+}
+window.pickFoodType = function(t) {
+  foodTypeFilter = t;
+  renderFoodFilterBar();
+  syncPlaceMarkers();
+  renderList();
 };
 
 window.openStats = function() {

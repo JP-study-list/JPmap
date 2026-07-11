@@ -87,6 +87,9 @@ export const ICON_SVG_PATHS = {
   museum:   '<path d="M4 9.5 12 4l8 5.5M5 9.5h14" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 12v5M12 12v5M17 12v5M4.5 20h15M6 17h12" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>',
 };
 
+// Restaurant sub-types (second dropdown when tag = 美食)
+export const FOOD_TYPES = ['拉麵', '壽司', '燒肉', '丼飯定食', '漢堡', '蕎麥麵', '義大利麵', '咖喱', '居酒屋', '甜點', '咖啡廳', '其他'];
+
 // Marker base scale at zoom 14 (inverted: zoom out = bigger markers)
 export const MARKER_BASE_ZOOM = 14;
 export const MARKER_BASE_SCALE = 7;
