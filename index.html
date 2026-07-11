@@ -114,7 +114,7 @@
         <button class="tool-btn" id="btn-pin" onclick="setMode('pin')"><svg class="icon"><use href="#icon-map-pin"/></svg>新增</button>
         <button class="tool-btn" id="btn-delete" onclick="setMode('delete')"><svg class="icon"><use href="#icon-trash"/></svg>刪除</button>
         <button class="tool-btn" id="btn-batch" onclick="setMode('batch')"><svg class="icon"><use href="#pin-star"/></svg>批次歸行程</button>
-        <button class="tool-btn" id="btn-restaurants" onclick="openRestaurants()"><svg class="icon"><use href="#pin-food"/></svg>餐廳</button>
+        <button class="tool-btn" id="btn-restaurants" onclick="toggleRestaurantMode()"><svg class="icon"><use href="#pin-food"/></svg>餐廳</button>
         <button class="tool-btn" id="btn-hide-routes" onclick="toggleHideRoutes()" title="顯示/隱藏所有路線"><svg class="icon"><use href="#icon-route"/></svg>路線</button>
       </div>
 
@@ -234,6 +234,7 @@
       <button class="map-ctrl-btn" style="margin-top:4px;" onclick="recenterMap()"><svg class="icon"><use href="#icon-current-location"/></svg></button>
     </div>
     <div id="mode-indicator" class="hidden"></div>
+    <div id="food-filter-bar" class="hidden"></div>
   </div>
 </div>
 
@@ -285,6 +286,9 @@
         <option value="美術館/博物館">美術館/博物館</option>
         <option value="景點">景點</option>
       </select>
+    </div>
+    <div class="form-row hidden" id="f-foodtype-row"><label>餐廳類型</label>
+      <select id="f-foodtype"></select>
     </div>
     <div class="form-row">
       <label>圖示 <span style="color:#bbb;font-weight:400;">（可自訂，預設依分類）</span></label>
@@ -401,18 +405,6 @@
       <button class="btn-primary" onclick="saveTrip()">儲存</button>
     </div>
     <button id="trip-delete-btn" class="hidden" onclick="deleteTripById(window._editingTripId)" style="width:100%;margin-top:8px;padding:8px;font-size:12px;background:none;border:none;color:#C0392B;cursor:pointer;">刪除此行程</button>
-  </div>
-</div>
-
-<!-- Restaurants Hub Modal -->
-<div id="restaurants-overlay" class="modal-overlay hidden">
-  <div class="modal-box">
-    <h3>餐廳管理</h3>
-    <p style="font-size:12px;color:#999;margin-bottom:10px;">集中管理所有「美食」與咖啡類地點</p>
-    <div id="restaurants-content"></div>
-    <div class="modal-actions">
-      <button class="btn-primary" onclick="closeRestaurants()">關閉</button>
-    </div>
   </div>
 </div>
 
