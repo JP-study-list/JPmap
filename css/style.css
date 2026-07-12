@@ -228,6 +228,15 @@ input, select, textarea { font-family: inherit; }
 #btn-hide-routes.routes-off { opacity: 0.45; text-decoration: line-through; }
 .place-item.drag-over, .route-item.drag-over { border-top: 2px solid #185FA5; }
 .route-edit-btn .icon { width: 15px; height: 15px; }
+/* Fullscreen image lightbox */
+#lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; }
+#lightbox.hidden { display: none; }
+#lightbox-img { max-width: 94vw; max-height: 88vh; object-fit: contain; border-radius: 6px; }
+#lightbox-close { position: absolute; top: calc(16px + env(safe-area-inset-top)); right: 16px; width: 40px; height: 40px; border: none; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; font-size: 20px; cursor: pointer; }
+.lb-nav { position: absolute; top: 50%; transform: translateY(-50%); width: 46px; height: 46px; border: none; border-radius: 50%; background: rgba(255,255,255,0.15); color: #fff; font-size: 26px; cursor: pointer; }
+#lightbox-prev { left: 12px; }
+#lightbox-next { right: 12px; }
+#lightbox-count { position: absolute; bottom: calc(20px + env(safe-area-inset-bottom)); left: 0; right: 0; text-align: center; color: #fff; font-size: 13px; }
 /* Food filter pill bar (restaurant mode) */
 #food-filter-bar { position: absolute; top: 74px; left: 50%; transform: translateX(-50%); z-index: 25; display: flex; gap: 6px; max-width: 90%; overflow-x: auto; padding: 4px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
 #food-filter-bar::-webkit-scrollbar { display: none; }
