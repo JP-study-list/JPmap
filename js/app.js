@@ -473,6 +473,15 @@ window.topSearchRoute = function() {
 // ══════════════════════════════════════
 // Firestore
 // ══════════════════════════════════════
+// Coalesce list re-renders: the 3 Firestore snapshots would otherwise each rebuild
+// the whole sidebar on first load. Batch them into one render on the next frame.
+let renderQueued = false;
+function scheduleRender() {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => { renderQueued = false; renderList(); });
+}
+
 function subscribeData() {
   const uid = currentUser.uid;
   const pq = query(collection(db, 'places'), where('uid', '==', uid));
@@ -480,20 +489,20 @@ function subscribeData() {
     places = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     places.sort(byOrder);
     syncPlaceMarkers();
-    renderList();
+    scheduleRender();
   });
   const rq = query(collection(db, 'routes'), where('uid', '==', uid));
   unsubscribeRoutes = onSnapshot(rq, (snap) => {
     routes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     routes.sort(byOrder);
     syncRoutePolylines();
-    renderList();
+    scheduleRender();
   });
   const tq = query(collection(db, 'trips'), where('uid', '==', uid));
   unsubscribeTrips = onSnapshot(tq, (snap) => {
     trips = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     refreshTripDropdowns();
-    renderList();
+    scheduleRender();
   });
 }
 
@@ -638,7 +647,7 @@ function renderInfoCarousel() {
   gallery.innerHTML = `
     <div class="carousel">
       ${multi ? '<button class="car-nav prev" onclick="infoPhotoNav(-1)">‹</button>' : ''}
-      <img src="${esc(infoPhotos[infoPhotoIdx])}" alt="地點照片" onerror="this.style.display='none'">
+      <img src="${esc(infoPhotos[infoPhotoIdx])}" alt="地點照片" onerror="this.style.display='none'" onclick="openLightbox()" style="cursor:zoom-in;">
       ${multi ? '<button class="car-nav next" onclick="infoPhotoNav(1)">›</button>' : ''}
     </div>${dots}`;
   gallery.classList.remove('hidden');
@@ -659,6 +668,28 @@ window.infoPhotoNav = function(dir) {
   if (!infoPhotos.length) return;
   infoPhotoIdx = (infoPhotoIdx + dir + infoPhotos.length) % infoPhotos.length;
   renderInfoCarousel();
+};
+
+// ── Fullscreen image lightbox ──
+window.openLightbox = function() {
+  if (!infoPhotos.length) return;
+  renderLightbox();
+  document.getElementById('lightbox').classList.remove('hidden');
+};
+window.closeLightbox = function() { document.getElementById('lightbox').classList.add('hidden'); };
+function renderLightbox() {
+  const multi = infoPhotos.length > 1;
+  document.getElementById('lightbox-img').src = infoPhotos[infoPhotoIdx];
+  document.getElementById('lightbox-prev').classList.toggle('hidden', !multi);
+  document.getElementById('lightbox-next').classList.toggle('hidden', !multi);
+  document.getElementById('lightbox-count').textContent = multi ? `${infoPhotoIdx + 1} / ${infoPhotos.length}` : '';
+}
+window.lightboxNav = function(e, dir) {
+  e.stopPropagation();
+  if (!infoPhotos.length) return;
+  infoPhotoIdx = (infoPhotoIdx + dir + infoPhotos.length) % infoPhotos.length;
+  renderLightbox();
+  renderInfoCarousel();  // keep the small carousel in sync
 };
 
 // One-click: convert a wishlist place to "visited"
@@ -970,6 +1001,7 @@ function routeItemHtml(r, scope) {
   const delSel = deleteSelected.has(`route:${r.id}`);
   const catBadge = r.cat ? `<span class="route-cat-badge">${esc(r.cat)}</span>` : '';
   const fareStr = r.fare ? ` · ¥${esc(String(r.fare))}` : '';
+  const kmStr = (() => { const d = routeDistance(r); return d ? ` · ${fmtKm(d)}` : ''; })();
   const fav = !!r.favorite;
   const heart = mode === 'delete' ? '' :
     `<button class="fav-btn${fav ? ' active' : ''}" title="${fav ? '取消收藏' : '加入我的最愛'}" onclick="event.stopPropagation();toggleRouteFavorite('${r.id}')">
@@ -986,7 +1018,7 @@ function routeItemHtml(r, scope) {
     <div class="route-swatch" style="background:${color};"></div>
     <div class="route-info">
       <div class="route-name">${esc(r.name)}</div>
-      <div class="route-meta">${r.date || ''}${r.date ? ' · ' : ''}${(r.points || []).length} 個節點${fareStr}</div>
+      <div class="route-meta">${r.date || ''}${r.date ? ' · ' : ''}${(r.points || []).length} 個節點${kmStr}${fareStr}</div>
       <span class="transport-badge" style="background:${color}22;color:${color};">${t.label}</span>${catBadge}
     </div>
     ${editBtn}
@@ -1083,7 +1115,10 @@ function renderTripsTree() {
             <svg class="trip-folder-icon icon"><use href="#pin-star"/></svg>
             <div style="flex:1;min-width:0;">
               <div class="trip-name">${esc(t.name)}</div>
-              <div class="trip-dates">${dateStr} · ${tripPlaces.length} 地點 / ${tripRoutes.length} 路線</div>
+              <div class="trip-dates">${dateStr} · ${tripPlaces.length} 地點 / ${tripRoutes.length} 路線${(() => {
+                const driveKm = tripRoutes.filter(r => r.transport === 'drive').reduce((s, r) => { const d = routeDistance(r); return s + (d ? d.km : 0); }, 0);
+                return driveKm > 0 ? ` · 🚗 ${driveKm < 10 ? driveKm.toFixed(1) : Math.round(driveKm)} km` : '';
+              })()}</div>
             </div>
             <button class="trip-eye-btn${hiddenTripIds.has(t.id) ? ' off' : ''}" title="${hiddenTripIds.has(t.id) ? '顯示此行程的地標/路線' : '隱藏此行程的地標/路線'}" onclick="event.stopPropagation();toggleTripVisibility('${t.id}')"><svg class="icon"><use href="#icon-eye${hiddenTripIds.has(t.id) ? '-off' : ''}"/></svg></button>
             <button class="trip-edit-btn" onclick="event.stopPropagation();editTrip('${t.id}')"><svg class="icon"><use href="#icon-edit"/></svg></button>
@@ -1804,8 +1839,34 @@ async function saveRouteFromResult(result, name, transport, routeIndex) {
   directionsRenderer.setOptions({ polylineOptions: { strokeColor: t.color, strokeWeight: 4, strokeOpacity: 0.6 } });
 
   // Stash the route data and open the details form to collect category/date/note/trip
-  pendingRoute = { name, transport, points: sampled };
+  // Capture the precise distance (meters) from Google Directions for new routes.
+  const distanceMeters = leg.distance ? leg.distance.value : null;
+  pendingRoute = { name, transport, points: sampled, distanceMeters };
   openRouteDetailsModal(name);
+}
+
+// Haversine distance (km) between two lat/lng points
+function haversineKm(a, b) {
+  const R = 6371, toRad = x => x * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+  const s = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+// A route's distance in km. Prefer the stored precise value; otherwise approximate
+// by summing straight-line segments between stored points (returns {km, approx}).
+function routeDistance(r) {
+  if (typeof r.distanceMeters === 'number') return { km: r.distanceMeters / 1000, approx: false };
+  const pts = r.points || [];
+  if (pts.length < 2) return null;
+  let km = 0;
+  for (let i = 1; i < pts.length; i++) km += haversineKm(pts[i-1], pts[i]);
+  return { km, approx: true };
+}
+function fmtKm(d) {
+  if (!d) return '';
+  const n = d.km < 10 ? d.km.toFixed(1) : Math.round(d.km);
+  return `${d.approx ? '約' : ''}${n} km`;
 }
 
 // ── Driving alternatives: draw all on map, click a line to choose ──
@@ -2013,6 +2074,7 @@ window.saveRouteDetails = async function() {
     fare:  transport === 'train' ? (document.getElementById('rd-fare').value || '') : '',
     tripId: document.getElementById('rd-trip').value || '',
   };
+  if (typeof pendingRoute.distanceMeters === 'number') data.distanceMeters = pendingRoute.distanceMeters;
   if (editingRouteId) {
     await updateRoute(editingRouteId, data);
     editingRouteId = null;
@@ -2141,6 +2203,8 @@ const MODAL_SUBMITS = {
 };
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') {
+    const lb = document.getElementById('lightbox');
+    if (lb && !lb.classList.contains('hidden')) { window.closeLightbox(); return; }
     if (manualDraw) { window.cancelManualDraw(); return; }
     if (altPickerData) { window.closeRouteAltModal(); return; }
     // Close whichever overlay is open (top-most wins by order below)
