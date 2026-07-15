@@ -2,7 +2,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, writeBatch }
+import { initializeFirestore, persistentLocalCache, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 // ── App modules ──
@@ -15,7 +15,8 @@ import { esc, placeIcon, placeColor, routeColor, byOrder, fmtDate, localToday, s
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
-const db = getFirestore(fbApp);
+// Local persistence: places/routes/trips remain readable offline
+const db = initializeFirestore(fbApp, { localCache: persistentLocalCache() });
 const googleProvider = new GoogleAuthProvider();
 
 // Build a Google Maps marker icon (data-URI SVG), with a cache so identical
@@ -521,22 +522,59 @@ function tripYear(t) { return (t.start || '').slice(0, 4) || '未定年份'; }
 // ══════════════════════════════════════
 // Markers & Polylines
 // ══════════════════════════════════════
+// Cluster renderer: brand-colored circle with the count
+let clusterer = null;
+function clusterRenderer() {
+  return {
+    render({ count, position }) {
+      const size = count < 10 ? 40 : count < 50 ? 46 : 54;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 48 48">
+        <circle cx="24" cy="24" r="22" fill="#185FA5" fill-opacity="0.92" stroke="#fff" stroke-width="2.5"/>
+      </svg>`;
+      return new google.maps.Marker({
+        position,
+        icon: { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg), scaledSize: new google.maps.Size(size, size), anchor: new google.maps.Point(size/2, size/2) },
+        label: { text: String(count), color: '#fff', fontSize: '13px', fontWeight: '600' },
+        zIndex: 2000 + count,
+      });
+    }
+  };
+}
+
 function syncPlaceMarkers() {
   const ids = new Set(places.map(p => p.id));
   Object.keys(markers).forEach(id => { if (!ids.has(id)) { markers[id].setMap(null); delete markers[id]; } });
   const scale = markerScaleForZoom();
+  const visible = [];
   places.forEach(p => {
     const sel = selectedPlaceId === p.id;
     const iconKey = placeIcon(p);
     const color = placeColor(p);
     const icon = buildMarkerIcon(iconKey, color, sel ? scale * 1.35 : scale);
-    let targetMap = (p.tripId && hiddenTripIds.has(p.tripId)) ? null : map;
-    if (restaurantMode) targetMap = (isRestaurant(p) && restaurantMatchesFilter(p)) ? map : null;
-    if (markers[p.id]) { markers[p.id].setIcon(icon); markers[p.id].setZIndex(sel ? 999 : 1); markers[p.id].setMap(targetMap); return; }
-    const marker = new google.maps.Marker({ position: { lat: p.lat, lng: p.lng }, map: targetMap, title: p.name, icon, zIndex: sel ? 999 : 1 });
-    marker.addListener('click', () => selectPlace(p.id));
-    markers[p.id] = marker;
+    let show = !(p.tripId && hiddenTripIds.has(p.tripId));
+    if (restaurantMode) show = isRestaurant(p) && restaurantMatchesFilter(p);
+    if (!markers[p.id]) {
+      // Markers are created WITHOUT a map — the clusterer manages attachment
+      const marker = new google.maps.Marker({ position: { lat: p.lat, lng: p.lng }, title: p.name, icon, zIndex: sel ? 999 : 1 });
+      marker.addListener('click', () => selectPlace(p.id));
+      markers[p.id] = marker;
+    } else {
+      markers[p.id].setIcon(icon);
+      markers[p.id].setZIndex(sel ? 999 : 1);
+    }
+    if (show) visible.push(markers[p.id]);
+    else markers[p.id].setMap(null);
   });
+
+  // Clustering: nearby markers merge into a count bubble; click zooms in.
+  if (window.markerClusterer && map) {
+    if (!clusterer) clusterer = new markerClusterer.MarkerClusterer({ map, markers: [], renderer: clusterRenderer() });
+    clusterer.clearMarkers(true);
+    clusterer.addMarkers(visible);
+  } else {
+    // Fallback if the clusterer library failed to load
+    visible.forEach(m => m.setMap(map));
+  }
 }
 
 function syncRoutePolylines() {
@@ -757,10 +795,12 @@ window.editSelectedPlace = function() {
 
 window.deleteSelectedPlace = async function() {
   if (!selectedPlaceId || !confirm('確定要刪除這個地點嗎？')) return;
+  const p = places.find(x => x.id === selectedPlaceId);
   if (markers[selectedPlaceId]) { markers[selectedPlaceId].setMap(null); delete markers[selectedPlaceId]; }
   await deletePlace(selectedPlaceId);
   selectedPlaceId = null;
   document.getElementById('info-panel').classList.add('hidden');
+  if (p) { lastDeleted = { places: [{ ...p }], routes: [] }; showUndoBar(1); }
 };
 
 // ══════════════════════════════════════
@@ -776,21 +816,52 @@ function toggleDeleteItem(type, id) {
   renderList();
 }
 
+// ── Delete undo: snapshot deleted docs, restore within 6s via the snackbar ──
+let lastDeleted = null;   // { places: [docData...], routes: [docData...] }
+let undoTimer = null;
+
+function showUndoBar(count) {
+  const bar = document.getElementById('undo-bar');
+  document.getElementById('undo-text').textContent = `已刪除 ${count} 個項目`;
+  bar.classList.remove('hidden');
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(hideUndoBar, 6000);
+}
+function hideUndoBar() {
+  document.getElementById('undo-bar').classList.add('hidden');
+  lastDeleted = null;
+}
+window.undoDelete = async function() {
+  if (!lastDeleted) return;
+  const { places: dp, routes: dr } = lastDeleted;
+  hideUndoBar();
+  // Re-insert with the original data (new document ids; original uid/createdAt/order kept)
+  for (const d of dp) { const { id, ...data } = d; await addDoc(collection(db, 'places'), stripUndefined(data)); }
+  for (const d of dr) { const { id, ...data } = d; await addDoc(collection(db, 'routes'), stripUndefined(data)); }
+};
+
 window.confirmDelete = async function() {
   if (deleteSelected.size === 0) return;
-  if (!confirm(`確定要刪除 ${deleteSelected.size} 個項目嗎？此動作無法復原。`)) return;
+  if (!confirm(`確定要刪除 ${deleteSelected.size} 個項目嗎？`)) return;
+  const snap = { places: [], routes: [] };
   for (const key of deleteSelected) {
     const [type, id] = key.split(':');
     if (type === 'place') {
+      const p = places.find(x => x.id === id);
+      if (p) snap.places.push({ ...p });
       if (markers[id]) { markers[id].setMap(null); delete markers[id]; }
       await deletePlace(id);
     } else if (type === 'route') {
+      const r = routes.find(x => x.id === id);
+      if (r) snap.routes.push({ ...r });
       if (polylines[id]) { polylines[id].setMap(null); delete polylines[id]; }
       await deleteRoute(id);
     }
   }
+  const n = snap.places.length + snap.routes.length;
   deleteSelected.clear();
   setMode('view');
+  if (n > 0) { lastDeleted = snap; showUndoBar(n); }
 };
 
 // ══════════════════════════════════════
