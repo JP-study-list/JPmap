@@ -1117,7 +1117,7 @@ function renderTripsTree() {
               <div class="trip-name">${esc(t.name)}</div>
               <div class="trip-dates">${dateStr} · ${tripPlaces.length} 地點 / ${tripRoutes.length} 路線${(() => {
                 const driveKm = tripRoutes.filter(r => r.transport === 'drive').reduce((s, r) => { const d = routeDistance(r); return s + (d ? d.km : 0); }, 0);
-                return driveKm > 0 ? ` · 🚗 ${driveKm < 10 ? driveKm.toFixed(1) : Math.round(driveKm)} km` : '';
+                return driveKm > 0 ? ` · <svg class="icon" style="width:11px;height:11px;vertical-align:-1.5px;"><use href="#icon-car"/></svg> ${driveKm < 10 ? driveKm.toFixed(1) : Math.round(driveKm)} km` : '';
               })()}</div>
             </div>
             <button class="trip-eye-btn${hiddenTripIds.has(t.id) ? ' off' : ''}" title="${hiddenTripIds.has(t.id) ? '顯示此行程的地標/路線' : '隱藏此行程的地標/路線'}" onclick="event.stopPropagation();toggleTripVisibility('${t.id}')"><svg class="icon"><use href="#icon-eye${hiddenTripIds.has(t.id) ? '-off' : ''}"/></svg></button>
@@ -1730,8 +1730,10 @@ function renderStatsContent() {
         <span class="stat-num">${byTag[tag]}</span>
       </div>`;
     }).join('');
-  // Total transit fare
-  const totalFare = routes.reduce((s, r) => s + (Number(r.fare) || 0), 0);
+  // Total mileage across all routes (precise where stored, otherwise approximated)
+  let totalKm = 0, anyApprox = false;
+  routes.forEach(r => { const d = routeDistance(r); if (d) { totalKm += d.km; if (d.approx) anyApprox = true; } });
+  const totalKmStr = (anyApprox ? '約' : '') + (totalKm < 10 ? totalKm.toFixed(1) : Math.round(totalKm).toLocaleString()) + ' km';
 
   document.getElementById('stats-content').innerHTML = `
     <div class="stat-cards">
@@ -1740,7 +1742,7 @@ function renderStatsContent() {
       <div class="stat-card"><div class="stat-card-num">${fav.length}</div><div class="stat-card-lbl">我的最愛</div></div>
       <div class="stat-card"><div class="stat-card-num">${routes.length}</div><div class="stat-card-lbl">路線</div></div>
       <div class="stat-card"><div class="stat-card-num">${trips.length}</div><div class="stat-card-lbl">行程</div></div>
-      <div class="stat-card"><div class="stat-card-num">¥${totalFare.toLocaleString()}</div><div class="stat-card-lbl">電車總花費</div></div>
+      <div class="stat-card"><div class="stat-card-num">${totalKmStr}</div><div class="stat-card-lbl">總里程</div></div>
     </div>
     ${tagRows ? `<div class="stat-section-title">已去地點分類</div><div class="stat-list">${tagRows}</div>` : ''}
   `;
