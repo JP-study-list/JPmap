@@ -566,13 +566,16 @@ function syncPlaceMarkers() {
     else markers[p.id].setMap(null);
   });
 
-  // Clustering: nearby markers merge into a count bubble; click zooms in.
-  if (window.markerClusterer && map) {
+  // Clustering only when zoomed OUT beyond the threshold (whole-Japan view).
+  // Zoomed in past it (region level, e.g. all of Shikoku), every marker shows.
+  const CLUSTER_MAX_ZOOM = 8;
+  const useCluster = window.markerClusterer && map && map.getZoom() < CLUSTER_MAX_ZOOM;
+  if (useCluster) {
     if (!clusterer) clusterer = new markerClusterer.MarkerClusterer({ map, markers: [], renderer: clusterRenderer() });
     clusterer.clearMarkers(true);
     clusterer.addMarkers(visible);
   } else {
-    // Fallback if the clusterer library failed to load
+    if (clusterer) clusterer.clearMarkers(true);
     visible.forEach(m => m.setMap(map));
   }
 }
