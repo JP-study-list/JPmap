@@ -228,6 +228,10 @@ input, select, textarea { font-family: inherit; }
 #btn-hide-routes.routes-off { opacity: 0.45; text-decoration: line-through; }
 .place-item.drag-over, .route-item.drag-over { border-top: 2px solid #185FA5; }
 .route-edit-btn .icon { width: 15px; height: 15px; }
+/* Delete undo snackbar */
+#undo-bar { position: fixed; bottom: calc(24px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); z-index: 90; background: #1a1a1a; color: #fff; border-radius: 10px; padding: 10px 14px; display: flex; align-items: center; gap: 14px; font-size: 14px; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+#undo-bar.hidden { display: none; }
+#undo-bar button { background: none; border: none; color: #6db3f2; font-size: 14px; font-weight: 600; cursor: pointer; padding: 2px 4px; }
 /* Fullscreen image lightbox */
 #lightbox { position: fixed; inset: 0; z-index: 100; background: rgba(0,0,0,0.9); display: flex; align-items: center; justify-content: center; }
 #lightbox.hidden { display: none; }
