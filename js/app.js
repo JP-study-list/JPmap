@@ -57,6 +57,37 @@ let tripModalReturnToPlace = false;  // after creating a trip from the place mod
 let pendingIcon = 'food', pendingColor = '#E8833A';  // for the icon/color picker in add/edit modal
 let pendingRating = 0;           // star rating in place modal (0 = none)
 let pendingPhotos = [];          // photo URLs in place modal (max 5)
+
+// ── Quick-add via URL (from the iOS photo shortcut) ──
+// ?quickadd=1&lat=..&lng=..&photo=<encoded url>&date=yyyy-MM-dd
+let urlQuickAdd = null;
+(function parseQuickAdd() {
+  const q = new URLSearchParams(location.search);
+  if (q.get('quickadd') !== '1') return;
+  const lat = parseFloat(q.get('lat')), lng = parseFloat(q.get('lng'));
+  urlQuickAdd = {
+    lat: Number.isFinite(lat) ? lat : null,
+    lng: Number.isFinite(lng) ? lng : null,
+    photo: q.get('photo') || '',
+    date: q.get('date') || '',
+  };
+  history.replaceState(null, '', location.pathname);  // clean the URL so refresh doesn't re-trigger
+})();
+
+// Fires once when login + map + first data are all ready
+function tryOpenQuickAdd() {
+  if (!urlQuickAdd || !map || !currentUser) return;
+  const qa = urlQuickAdd;
+  urlQuickAdd = null;
+  if (qa.lat !== null && qa.lng !== null) {
+    pendingLatLng = { lat: qa.lat, lng: qa.lng };
+    map.panTo(pendingLatLng);
+    map.setZoom(15);
+  }
+  openAddModal('');
+  if (qa.date) document.getElementById('f-date').value = qa.date;
+  if (qa.photo) { pendingPhotos = [qa.photo]; renderPhotoInputs(); }
+}
 let topTransport = 'drive';       // for top search bar route mode
 let routeClickTarget = null;      // pending {lat,lng,label} when picking origin/dest from map in route mode
 let routeOriginCoord = null, routeDestCoord = null;  // precise coords when origin/dest picked from map
@@ -974,6 +1005,7 @@ function matchesSearch(name) {
 }
 
 function renderList() {
+  tryOpenQuickAdd();
   // Restaurant mode: sidebar shows only restaurants (filtered by pill + search)
   if (restaurantMode) {
     const list = document.getElementById('content-list');
