@@ -68,6 +68,63 @@
       padding: 2px 9px; margin-bottom: 8px; font-weight: 500;
     }
     #poi-name { font-size: 17px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; padding-right: 24px; }
+
+    /* Photo carousel */
+    #poi-photos { margin-bottom: 12px; display: none; }
+    #poi-photos.show { display: block; }
+    .carousel { position: relative; border-radius: 10px; overflow: hidden; background: #f0f0f0; }
+    .carousel img {
+      display: block; width: 100%; height: 180px; object-fit: cover;
+      cursor: zoom-in; background: #f0f0f0;
+    }
+    .carousel-nav {
+      position: absolute; top: 50%; transform: translateY(-50%);
+      width: 30px; height: 30px; border-radius: 50%; border: none;
+      background: rgba(0,0,0,0.45); color: #fff;
+      display: flex; align-items: center; justify-content: center; padding: 0;
+    }
+    .carousel-nav:hover { background: rgba(0,0,0,0.65); }
+    .carousel-nav.prev { left: 8px; }
+    .carousel-nav.next { right: 8px; }
+    .carousel-nav svg { width: 15px; height: 15px; }
+    .carousel-dots {
+      position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 5px;
+    }
+    .carousel-dots .dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: rgba(255,255,255,0.55);
+    }
+    .carousel-dots .dot.on { background: #fff; }
+
+    /* Fullscreen lightbox */
+    #lightbox {
+      position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.92);
+      display: none; align-items: center; justify-content: center;
+    }
+    #lightbox.show { display: flex; }
+    #lightbox img { max-width: 96vw; max-height: 90vh; object-fit: contain; }
+    #lightbox-close {
+      position: absolute; top: calc(env(safe-area-inset-top) + 14px); right: 16px;
+      width: 38px; height: 38px; border-radius: 50%; border: none;
+      background: rgba(255,255,255,0.16); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+    }
+    #lightbox-close svg { width: 20px; height: 20px; }
+    .lb-nav {
+      position: absolute; top: 50%; transform: translateY(-50%);
+      width: 42px; height: 42px; border-radius: 50%; border: none;
+      background: rgba(255,255,255,0.16); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .lb-nav.prev { left: 14px; }
+    .lb-nav.next { right: 14px; }
+    .lb-nav svg { width: 20px; height: 20px; }
+    #lb-count {
+      position: absolute; bottom: calc(env(safe-area-inset-bottom) + 18px);
+      left: 50%; transform: translateX(-50%);
+      color: rgba(255,255,255,0.75); font-size: 13px;
+    }
     #poi-note { font-size: 13px; color: #555; line-height: 1.6; white-space: pre-wrap; word-break: break-word; margin-bottom: 14px; }
     #poi-note.empty { color: #bbb; font-style: italic; }
     #poi-nav {
@@ -111,6 +168,7 @@
   </button>
   <span id="poi-tag"></span>
   <div id="poi-name"></div>
+  <div id="poi-photos"></div>
   <div id="poi-note"></div>
   <button id="poi-nav" onclick="navPoi()">
     <svg viewBox="0 0 24 24"><path d="M3 11l19-9-9 19-2-8-8-2Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -119,6 +177,21 @@
 </div>
 
 <div id="credit">日本旅遊地圖</div>
+
+<!-- Fullscreen photo lightbox -->
+<div id="lightbox" onclick="closeLightbox()">
+  <button id="lightbox-close" onclick="event.stopPropagation();closeLightbox()" aria-label="關閉">
+    <svg viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <button class="lb-nav prev" onclick="event.stopPropagation();lbStep(-1)" aria-label="上一張">
+    <svg viewBox="0 0 24 24"><polyline points="15,5 8,12 15,19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <img id="lightbox-img" src="" alt="地點照片" onclick="event.stopPropagation()">
+  <button class="lb-nav next" onclick="event.stopPropagation();lbStep(1)" aria-label="下一張">
+    <svg viewBox="0 0 24 24"><polyline points="9,5 16,12 9,19" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+  <div id="lb-count"></div>
+</div>
 
 <script>
   // Defined in a classic script so the Maps callback always finds it,
@@ -224,7 +297,71 @@ function hideState() { stateEl.classList.add('hidden'); stateEl.style.display = 
 
 // ── POI card ──
 let activePlace = null;
+let poiPhotos = [];
+let photoIdx = 0;
 const poiCard = document.getElementById('poi-card');
+
+function renderCarousel() {
+  const wrap = document.getElementById('poi-photos');
+  if (!poiPhotos.length) {
+    wrap.classList.remove('show');
+    wrap.innerHTML = '';
+    return;
+  }
+  const multi = poiPhotos.length > 1;
+  const dots = multi
+    ? `<div class="carousel-dots">${poiPhotos.map((_, i) => `<span class="dot${i === photoIdx ? ' on' : ''}"></span>`).join('')}</div>`
+    : '';
+  const navs = multi ? `
+    <button class="carousel-nav prev" onclick="event.stopPropagation();photoStep(-1)" aria-label="上一張">
+      <svg viewBox="0 0 24 24"><polyline points="15,5 8,12 15,19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="carousel-nav next" onclick="event.stopPropagation();photoStep(1)" aria-label="下一張">
+      <svg viewBox="0 0 24 24"><polyline points="9,5 16,12 9,19" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>` : '';
+  wrap.innerHTML = `<div class="carousel">
+      <img src="${esc(poiPhotos[photoIdx])}" alt="地點照片" onerror="this.style.visibility='hidden'" onclick="openLightbox()">
+      ${navs}${dots}
+    </div>`;
+  wrap.classList.add('show');
+}
+
+window.photoStep = function (d) {
+  if (!poiPhotos.length) return;
+  photoIdx = (photoIdx + d + poiPhotos.length) % poiPhotos.length;
+  renderCarousel();
+};
+
+// ── Lightbox ──
+window.openLightbox = function () {
+  if (!poiPhotos.length) return;
+  document.getElementById('lightbox-img').src = poiPhotos[photoIdx];
+  updateLbCount();
+  document.getElementById('lightbox').classList.add('show');
+};
+window.closeLightbox = function () {
+  document.getElementById('lightbox').classList.remove('show');
+};
+window.lbStep = function (d) {
+  if (!poiPhotos.length) return;
+  photoIdx = (photoIdx + d + poiPhotos.length) % poiPhotos.length;
+  document.getElementById('lightbox-img').src = poiPhotos[photoIdx];
+  updateLbCount();
+  renderCarousel();  // keep small carousel in sync
+};
+function updateLbCount() {
+  const el = document.getElementById('lb-count');
+  el.textContent = poiPhotos.length > 1 ? `${photoIdx + 1} / ${poiPhotos.length}` : '';
+  const show = poiPhotos.length > 1 ? 'flex' : 'none';
+  document.querySelectorAll('.lb-nav').forEach(b => b.style.display = show);
+}
+// Keyboard support for lightbox
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('lightbox').classList.contains('show')) return;
+  if (e.key === 'Escape') window.closeLightbox();
+  else if (e.key === 'ArrowLeft') window.lbStep(-1);
+  else if (e.key === 'ArrowRight') window.lbStep(1);
+});
 function openPoi(p) {
   activePlace = p;
   const tagEl = document.getElementById('poi-tag');
@@ -238,6 +375,17 @@ function openPoi(p) {
     tagEl.style.display = 'none';
   }
   document.getElementById('poi-name').textContent = p.name || '未命名地點';
+
+  // Photos (accept both absolute URLs and repo-relative paths)
+  const raw = Array.isArray(p.photos) ? p.photos.filter(Boolean) : (p.photo ? [p.photo] : []);
+  poiPhotos = raw.map(u => {
+    const s = String(u).trim();
+    if (/^(https?:|data:)/i.test(s)) return s;
+    return new URL(s.replace(/^\.?\//, ''), location.href).href;  // resolve relative to share.html
+  });
+  photoIdx = 0;
+  renderCarousel();
+
   const noteEl = document.getElementById('poi-note');
   if (p.note && p.note.trim()) {
     noteEl.textContent = p.note;
@@ -248,7 +396,11 @@ function openPoi(p) {
   }
   poiCard.classList.add('show');
 }
-window.closePoi = function () { poiCard.classList.remove('show'); activePlace = null; };
+window.closePoi = function () {
+  poiCard.classList.remove('show');
+  activePlace = null;
+  window.closeLightbox();
+};
 window.navPoi = function () {
   if (!activePlace) return;
   const url = `https://www.google.com/maps/dir/?api=1&destination=${activePlace.lat},${activePlace.lng}`;
