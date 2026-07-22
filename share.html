@@ -120,6 +120,16 @@
 
 <div id="credit">日本旅遊地圖</div>
 
+<script>
+  // Defined in a classic script so the Maps callback always finds it,
+  // regardless of when the module below finishes evaluating.
+  window._mapReady = false;
+  window._initMap = function () {
+    window._mapReady = true;
+    if (window._onReady) window._onReady();
+  };
+</script>
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
 import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -262,9 +272,8 @@ async function loadShare() {
   }
 }
 
-// ── Google Maps ──
+// ── Google Maps ── (_initMap is defined in the classic script above)
 let map;
-window._initMap = function () { window._mapReady = true; if (window._onReady) window._onReady(); };
 
 function renderMap() {
   const places = Array.isArray(shareData.places) ? shareData.places : [];
@@ -331,15 +340,22 @@ function fillHeader() {
 
 // ── Boot ──
 (async function boot() {
+  // Surface a reason instead of spinning forever if something stalls
+  const timeout = setTimeout(() => {
+    if (!stateEl.classList.contains('hidden')) {
+      showError('載入逾時', '請檢查網路後重新整理；若持續發生請聯絡分享者');
+    }
+  }, 15000);
+
   shareData = await loadShare();
-  if (!shareData) return;
+  if (!shareData) { clearTimeout(timeout); return; }
   fillHeader();
-  const start = () => { hideState(); renderMap(); };
+  const start = () => { clearTimeout(timeout); hideState(); renderMap(); };
   if (window._mapReady) start();
   else window._onReady = start;
 })();
 </script>
 
-<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCN2CD_zIC7FedAfRm6ZnVh7jIqhZD6NWs&callback=_initMap&language=zh-TW"></script>
+<script async src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCN2CD_zIC7FedAfRm6ZnVh7jIqhZD6NWs&callback=_initMap&language=zh-TW&loading=async"></script>
 </body>
 </html>
