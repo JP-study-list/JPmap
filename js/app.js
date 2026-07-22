@@ -1227,6 +1227,7 @@ function renderTripsTree() {
               })()}</div>
             </div>
             <button class="trip-eye-btn${hiddenTripIds.has(t.id) ? ' off' : ''}" title="${hiddenTripIds.has(t.id) ? '顯示此行程的地標/路線' : '隱藏此行程的地標/路線'}" onclick="event.stopPropagation();toggleTripVisibility('${t.id}')"><svg class="icon"><use href="#icon-eye${hiddenTripIds.has(t.id) ? '-off' : ''}"/></svg></button>
+            <button class="trip-edit-btn" title="分享此行程（唯讀）" onclick="event.stopPropagation();shareTrip('${t.id}')"><svg class="icon"><use href="#icon-share"/></svg></button>
             <button class="trip-edit-btn" onclick="event.stopPropagation();editTrip('${t.id}')"><svg class="icon"><use href="#icon-edit"/></svg></button>
           </div>`;
         if (expanded) {
@@ -2348,3 +2349,73 @@ window.selectPlace = selectPlace;
 window.selectRoute = selectRoute;
 
 
+
+// ══════════════════════════════════════
+// 唯讀分享行程（快照）
+// ══════════════════════════════════════
+window.shareTrip = async function (tripId) {
+  if (!currentUser) { alert('請先登入才能分享'); return; }
+
+  const trip = trips.find(t => t.id === tripId);
+  if (!trip) { alert('找不到此行程'); return; }
+
+  // 挑出這個行程底下的地點與路線，只保留分享頁需要的欄位（快照）
+  const sPlaces = places
+    .filter(p => p.tripId === tripId && typeof p.lat === 'number' && typeof p.lng === 'number')
+    .map(p => ({
+      name: p.name || '',
+      tag: p.tag || '',
+      note: p.note || '',
+      lat: p.lat,
+      lng: p.lng,
+      icon: p.icon || '',
+      color: p.color || '',
+    }));
+
+  const sRoutes = routes
+    .filter(r => r.tripId === tripId && Array.isArray(r.points) && r.points.length >= 2)
+    .map(r => ({
+      name: r.name || '',
+      transport: r.transport || 'drive',
+      points: r.points.map(pt => ({ lat: pt.lat, lng: pt.lng })),
+    }));
+
+  if (sPlaces.length === 0 && sRoutes.length === 0) {
+    alert('此行程尚無地點或路線，無法分享');
+    return;
+  }
+
+  const dateStr = trip.start
+    ? (trip.end && trip.end !== trip.start ? `${trip.start} ~ ${trip.end}` : trip.start)
+    : '';
+
+  const payload = {
+    tripName: trip.name || '分享行程',
+    tripDate: dateStr,
+    places: sPlaces,
+    routes: sRoutes,
+    createdAt: Date.now(),
+    owner: currentUser.uid,   // 僅供你日後辨識，分享頁不顯示
+  };
+
+  try {
+    const ref = await addDoc(collection(db, 'shares'), payload);
+    const url = `${location.origin}${location.pathname.replace(/index\.html$/, '')}share.html?id=${ref.id}`;
+
+    // 嘗試複製到剪貼簿
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(url);
+      copied = true;
+    } catch (e) { /* 某些瀏覽器不允許，改用提示讓使用者手動複製 */ }
+
+    if (copied) {
+      alert('已建立分享連結，並複製到剪貼簿：\n\n' + url);
+    } else {
+      // 複製失敗時用 prompt 讓使用者長按複製
+      prompt('分享連結（長按複製）：', url);
+    }
+  } catch (e) {
+    alert('建立分享連結失敗：' + (e && e.message ? e.message : e));
+  }
+};
