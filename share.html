@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <title>分享行程 · 日本旅遊地圖</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif; background: #f5f5f5; color: #1a1a1a; }
+    button { font-family: inherit; cursor: pointer; }
+
+    /* Top bar with trip title */
+    #topbar {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 20;
+      background: rgba(255,255,255,0.96); backdrop-filter: saturate(180%) blur(8px);
+      border-bottom: 0.5px solid #e5e5e5;
+      padding: calc(env(safe-area-inset-top) + 12px) 16px 12px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    #topbar .title-wrap { flex: 1; min-width: 0; }
+    #trip-title {
+      font-size: clamp(15px, 4vw, 18px); font-weight: 600; color: #1a1a1a;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    #trip-sub { font-size: 12px; color: #888; margin-top: 2px; }
+    #topbar .badge {
+      flex-shrink: 0; font-size: 11px; color: #185FA5;
+      background: #EBF3FC; border-radius: 999px; padding: 3px 9px; font-weight: 500;
+    }
+
+    #map { position: absolute; inset: 0; }
+
+    /* Loading / error states */
+    #state {
+      position: absolute; inset: 0; z-index: 40;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 14px; background: #f5f5f5; padding: 32px; text-align: center;
+    }
+    #state.hidden { display: none; }
+    .spinner {
+      width: 34px; height: 34px; border: 3px solid #e0e0e0; border-top-color: #185FA5;
+      border-radius: 50%; animation: spin 0.9s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #state .msg { font-size: 14px; color: #666; line-height: 1.6; }
+    #state .sub { font-size: 12px; color: #aaa; }
+
+    /* POI info card */
+    #poi-card {
+      position: absolute; bottom: calc(env(safe-area-inset-bottom) + 20px);
+      left: 50%; transform: translateX(-50%) translateY(20px);
+      z-index: 30; width: min(340px, calc(100vw - 32px));
+      background: #fff; border-radius: 14px; padding: 18px;
+      box-shadow: 0 6px 28px rgba(0,0,0,0.2);
+      opacity: 0; pointer-events: none; transition: opacity 0.18s, transform 0.18s;
+    }
+    #poi-card.show { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+    #poi-card-close {
+      position: absolute; top: 12px; right: 12px; background: none; border: none;
+      color: #999; padding: 4px; border-radius: 6px; display: flex; line-height: 0;
+    }
+    #poi-card-close:hover { background: #f0f0f0; color: #555; }
+    #poi-card-close svg { width: 16px; height: 16px; }
+    #poi-tag {
+      display: inline-block; font-size: 11px; border-radius: 999px;
+      padding: 2px 9px; margin-bottom: 8px; font-weight: 500;
+    }
+    #poi-name { font-size: 17px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; padding-right: 24px; }
+    #poi-note { font-size: 13px; color: #555; line-height: 1.6; white-space: pre-wrap; word-break: break-word; margin-bottom: 14px; }
+    #poi-note.empty { color: #bbb; font-style: italic; }
+    #poi-nav {
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      width: 100%; padding: 11px; background: #185FA5; color: #fff; border: none;
+      border-radius: 9px; font-size: 14px; font-weight: 500; transition: background 0.15s;
+    }
+    #poi-nav:hover { background: #0C447C; }
+    #poi-nav svg { width: 17px; height: 17px; }
+
+    /* Footer credit */
+    #credit {
+      position: absolute; bottom: calc(env(safe-area-inset-bottom) + 8px); right: 10px;
+      z-index: 15; font-size: 11px; color: #aaa;
+      background: rgba(255,255,255,0.85); border-radius: 6px; padding: 3px 8px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="topbar" class="hidden" style="display:none;">
+  <div class="title-wrap">
+    <div id="trip-title">—</div>
+    <div id="trip-sub"></div>
+  </div>
+  <span class="badge">唯讀分享</span>
+</div>
+
+<div id="map"></div>
+
+<div id="state">
+  <div class="spinner" id="spinner"></div>
+  <div class="msg" id="state-msg">載入分享行程中…</div>
+  <div class="sub" id="state-sub"></div>
+</div>
+
+<!-- POI info card -->
+<div id="poi-card">
+  <button id="poi-card-close" onclick="closePoi()" aria-label="關閉">
+    <svg viewBox="0 0 24 24"><line x1="6" y1="6" x2="18" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><line x1="18" y1="6" x2="6" y2="18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <span id="poi-tag"></span>
+  <div id="poi-name"></div>
+  <div id="poi-note"></div>
+  <button id="poi-nav" onclick="navPoi()">
+    <svg viewBox="0 0 24 24"><path d="M3 11l19-9-9 19-2-8-8-2Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    在 Google Maps 導航
+  </button>
+</div>
+
+<div id="credit">日本旅遊地圖</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+// ── Firebase (same project as main JPmap) ──
+const firebaseConfig = {
+  apiKey: "AIzaSyCN2CD_zIC7FedAfRm6ZnVh7jIqhZD6NWs",
+  authDomain: "japan-map-500903.firebaseapp.com",
+  projectId: "japan-map-500903",
+  storageBucket: "japan-map-500903.firebasestorage.app",
+  messagingSenderId: "447815719019",
+  appId: "1:447815719019:web:16c9a59eef4e71fe3c392e"
+};
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// ── Config mirrored from main app (icons / colors / transport) ──
+const TRANSPORT = {
+  drive: { label: '開車 / 公車', color: '#378ADD' },
+  walk:  { label: '走路',        color: '#EF9F27' },
+  train: { label: '電車',        color: '#D85A30' },
+};
+const TAG_STYLE = {
+  '美食': { bg: '#FAEEDA', text: '#633806' },
+  '神社': { bg: '#E1F5EE', text: '#085041' },
+  '自然': { bg: '#EAF3DE', text: '#27500A' },
+  '文化': { bg: '#EEEDFE', text: '#3C3489' },
+  '購物': { bg: '#FAECE7', text: '#712B13' },
+  '住宿': { bg: '#E8F0FE', text: '#1A3A7A' },
+  '交通': { bg: '#FCE8E6', text: '#8C2D1E' },
+  '活動': { bg: '#FDF6D8', text: '#7A5B00' },
+  '美術館/博物館': { bg: '#F3E9F7', text: '#5B2C6F' },
+  '景點': { bg: '#E4F5F8', text: '#0B5E6E' },
+};
+const TAG_DEFAULT_ICON = {
+  '美食': 'food', '神社': 'shrine', '自然': 'nature', '文化': 'castle',
+  '購物': 'shopping', '住宿': 'lodging', '交通': 'station', '活動': 'star',
+  '美術館/博物館': 'museum', '景點': 'camera',
+};
+const TAG_DEFAULT_COLOR = {
+  '美食': '#E8833A', '神社': '#0E8A6E', '自然': '#4C9A2A', '文化': '#6C5CE7',
+  '購物': '#D6336C', '住宿': '#2B7DE9', '交通': '#C0392B', '活動': '#F1B807',
+  '美術館/博物館': '#8E44AD', '景點': '#17A2B8',
+};
+const ICON_SVG_PATHS = {
+  pin:      '<path d="M12 21c-3.5-3.5-7-6.93-7-11a7 7 0 0 1 14 0c0 4.07-3.5 7.5-7 11Z" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="10" r="2.5" fill="none" stroke="#fff" stroke-width="1.8"/>',
+  food:     '<path d="M6 3v7a2 2 0 0 0 2 2v9M6 3v5M9 3v5M16 3c-1.5 0-2.5 2-2.5 5s1 4 2.5 4v9" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>',
+  cafe:     '<path d="M5 8h12v5a5 5 0 0 1-5 5H10a5 5 0 0 1-5-5V8ZM17 9h2a2 2 0 0 1 0 4h-2M7 3v2M10 3v2M13 3v2" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  shrine:   '<path d="M3 7h18M4 7l1-2.5h14L20 7M6 7v13M18 7v13M5 11h14" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+  castle:   '<path d="M4 21V8l2 1V6l2 1V5l2 1V4h4v2l2-1v2l2-1v3l2-1v13M4 21h16M9 21v-4a3 3 0 0 1 6 0v4" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  nature:   '<path d="M12 3 5 13h4l-3 5h12l-3-5h4L12 3ZM12 18v3" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+  shopping: '<path d="M6 8h12l-1 12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1L6 8ZM9 8V6a3 3 0 0 1 6 0v2" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+  lodging:  '<path d="M3 18v-6a2 2 0 0 1 2-2h10a4 4 0 0 1 4 4v4M3 14h16M3 18v2M21 14v6M7 10V7a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v3" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+  station:  '<rect x="5" y="3" width="14" height="13" rx="3" fill="none" stroke="#fff" stroke-width="1.7"/><line x1="5" y1="10" x2="19" y2="10" stroke="#fff" stroke-width="1.7"/><circle cx="9" cy="13.2" r="1" fill="#fff"/><circle cx="15" cy="13.2" r="1" fill="#fff"/><line x1="8.5" y1="16" x2="7" y2="20" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/><line x1="15.5" y1="16" x2="17" y2="20" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/>',
+  camera:   '<path d="M3 8a2 2 0 0 1 2-2h2l1.5-2h7L19 6a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8Z" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/><circle cx="12" cy="12.5" r="3.2" fill="none" stroke="#fff" stroke-width="1.6"/>',
+  heart:    '<path d="M12 20s-7-4.6-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.4-7 10-7 10Z" fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/>',
+  star:     '<path d="m12 3 2.6 5.6 6 .8-4.4 4.2 1.1 6L12 16.8 6.7 19.6l1.1-6L3.4 9.4l6-.8L12 3Z" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>',
+  museum:   '<path d="M4 9.5 12 4l8 5.5M5 9.5h14" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 12v5M12 12v5M17 12v5M4.5 20h15M6 17h12" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>',
+};
+
+// ── Helpers ──
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c])); }
+function placeIcon(p) { return (p.icon) || TAG_DEFAULT_ICON[p.tag] || 'pin'; }
+function placeColor(p) { return (p.color) || TAG_DEFAULT_COLOR[p.tag] || '#566573'; }
+
+function buildMarkerIcon(iconKey, color, size) {
+  const glyph = ICON_SVG_PATHS[iconKey] || ICON_SVG_PATHS.pin;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="11" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+    <g transform="translate(2.6 2.6) scale(0.78)">${glyph}</g>
+  </svg>`;
+  return {
+    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+    scaledSize: new google.maps.Size(size, size),
+    anchor: new google.maps.Point(size / 2, size / 2),
+  };
+}
+
+// ── State elements ──
+const stateEl = document.getElementById('state');
+const stateMsg = document.getElementById('state-msg');
+const stateSub = document.getElementById('state-sub');
+const spinner = document.getElementById('spinner');
+function showError(msg, sub) {
+  spinner.style.display = 'none';
+  stateMsg.textContent = msg;
+  stateSub.textContent = sub || '';
+  stateEl.classList.remove('hidden');
+  stateEl.style.display = 'flex';
+}
+function hideState() { stateEl.classList.add('hidden'); stateEl.style.display = 'none'; }
+
+// ── POI card ──
+let activePlace = null;
+const poiCard = document.getElementById('poi-card');
+function openPoi(p) {
+  activePlace = p;
+  const tagEl = document.getElementById('poi-tag');
+  if (p.tag) {
+    const st = TAG_STYLE[p.tag] || { bg: '#eee', text: '#555' };
+    tagEl.textContent = p.tag;
+    tagEl.style.background = st.bg;
+    tagEl.style.color = st.text;
+    tagEl.style.display = 'inline-block';
+  } else {
+    tagEl.style.display = 'none';
+  }
+  document.getElementById('poi-name').textContent = p.name || '未命名地點';
+  const noteEl = document.getElementById('poi-note');
+  if (p.note && p.note.trim()) {
+    noteEl.textContent = p.note;
+    noteEl.classList.remove('empty');
+  } else {
+    noteEl.textContent = '（無備註）';
+    noteEl.classList.add('empty');
+  }
+  poiCard.classList.add('show');
+}
+window.closePoi = function () { poiCard.classList.remove('show'); activePlace = null; };
+window.navPoi = function () {
+  if (!activePlace) return;
+  const url = `https://www.google.com/maps/dir/?api=1&destination=${activePlace.lat},${activePlace.lng}`;
+  window.open(url, '_blank');
+};
+
+// ── Load share doc ──
+const params = new URLSearchParams(location.search);
+const shareId = params.get('id');
+
+let shareData = null;
+async function loadShare() {
+  if (!shareId) { showError('連結無效', '缺少分享代碼'); return null; }
+  try {
+    const snap = await getDoc(doc(db, 'shares', shareId));
+    if (!snap.exists()) { showError('找不到此分享行程', '連結可能已失效或代碼錯誤'); return null; }
+    return snap.data();
+  } catch (e) {
+    showError('載入失敗', '請檢查網路連線後重試');
+    return null;
+  }
+}
+
+// ── Google Maps ──
+let map;
+window._initMap = function () { window._mapReady = true; if (window._onReady) window._onReady(); };
+
+function renderMap() {
+  const places = Array.isArray(shareData.places) ? shareData.places : [];
+  const routes = Array.isArray(shareData.routes) ? shareData.routes : [];
+
+  map = new google.maps.Map(document.getElementById('map'), {
+    center: { lat: 35.68, lng: 139.76 },
+    zoom: 11,
+    disableDefaultUI: true,
+    zoomControl: true,
+    gestureHandling: 'greedy',
+    clickableIcons: false,
+  });
+
+  const bounds = new google.maps.LatLngBounds();
+  let hasPoint = false;
+
+  // Routes (polylines)
+  routes.forEach(r => {
+    const pts = (r.points || []).filter(pt => typeof pt.lat === 'number' && typeof pt.lng === 'number');
+    if (pts.length < 2) return;
+    const t = TRANSPORT[r.transport] || TRANSPORT.drive;
+    new google.maps.Polyline({
+      path: pts, map,
+      strokeColor: t.color, strokeWeight: 3, strokeOpacity: 0.8,
+    });
+    pts.forEach(pt => { bounds.extend(pt); hasPoint = true; });
+  });
+
+  // Places (markers)
+  places.forEach(p => {
+    if (typeof p.lat !== 'number' || typeof p.lng !== 'number') return;
+    const marker = new google.maps.Marker({
+      position: { lat: p.lat, lng: p.lng },
+      title: p.name,
+      icon: buildMarkerIcon(placeIcon(p), placeColor(p), 34),
+      map,
+    });
+    marker.addListener('click', () => openPoi(p));
+    bounds.extend({ lat: p.lat, lng: p.lng });
+    hasPoint = true;
+  });
+
+  // Close card when tapping empty map
+  map.addListener('click', () => window.closePoi());
+
+  if (hasPoint) {
+    map.fitBounds(bounds, 64);
+    // Avoid over-zoom when only one point
+    google.maps.event.addListenerOnce(map, 'idle', () => { if (map.getZoom() > 16) map.setZoom(16); });
+  }
+}
+
+function fillHeader() {
+  const bar = document.getElementById('topbar');
+  document.getElementById('trip-title').textContent = shareData.tripName || '分享行程';
+  const nPlace = (shareData.places || []).length;
+  const nRoute = (shareData.routes || []).length;
+  const date = shareData.tripDate ? shareData.tripDate + ' · ' : '';
+  document.getElementById('trip-sub').textContent = `${date}${nPlace} 地點 / ${nRoute} 路線`;
+  bar.classList.remove('hidden');
+  bar.style.display = 'flex';
+}
+
+// ── Boot ──
+(async function boot() {
+  shareData = await loadShare();
+  if (!shareData) return;
+  fillHeader();
+  const start = () => { hideState(); renderMap(); };
+  if (window._mapReady) start();
+  else window._onReady = start;
+})();
+</script>
+
+<script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCN2CD_zIC7FedAfRm6ZnVh7jIqhZD6NWs&callback=_initMap&language=zh-TW"></script>
+</body>
+</html>
