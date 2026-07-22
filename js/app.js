@@ -2370,6 +2370,8 @@ window.shareTrip = async function (tripId) {
       lng: p.lng,
       icon: p.icon || '',
       color: p.color || '',
+      photos: (Array.isArray(p.photos) ? p.photos : (p.photo ? [p.photo] : []))
+        .map(u => String(u).trim()).filter(Boolean).slice(0, 5),
     }));
 
   const sRoutes = routes
