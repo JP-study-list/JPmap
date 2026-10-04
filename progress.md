@@ -1,5 +1,13 @@
 # progress.md — 開發歷史（最新在上）
 
+## 2026-10-04（階段 1b 照片改存 Firestore）
+- 類型：新增
+- 影響檔案：js/photos.js（新增）, js/app.js, share.html, index.html, css/style.css, sw.js, firestore.rules, CLAUDE.md, project-index.md
+- 摘要：地點表單改成「＋ 加照片」（相簿或拍照，最多 5 張），選好即縮到長邊 1280、去除拍攝地點等中繼資料，儲存時以 Bytes 存進 Firestore `photos`，地點記 `fs:<id>`；舊網址照片照常顯示。資訊卡、全螢幕看圖、分享頁都能顯示 Firestore 照片；分享行程時把該行程照片設為 shared。刪除地點後 6 秒（復原時間）才刪照片。設定加「搬移舊照片」一鍵把舊網址照片搬進 Firestore（下載不了的保留原網址）。`firestore.rules` 與線上同步並加入 photos、收緊 shares（不可列出、create 需 owner）。順手修正備份匯出漏掉行程 id（還原時地點會脫離行程）。
+- 原因：照片放在公開 repo，37 張中大多數含 GPS 位置；使用者確認是 Spark 方案（免費、不會被收費）。
+- 驗證：Playwright + 假 Firebase：照片 21/21（2.7MB → 243KB、直式方向正確、無 EXIF、移除後刪除、取消不上傳、壞檔提示、復原保留、過時刪除、分享、搬移、分享頁顯示）；地圖 12/12、登入 9/9 回歸通過。真實 Firestore 規則尚未實測。
+- 待辦/已知問題：使用者需先在 Console 發布新規則，再 push 上線；上線後手機新增一張照片試，再按「搬移舊照片」；確認後另議刪除 repo `photos/`（破壞性）。備份 JSON 不含照片本體。舊備份檔的行程 id 已遺失，建議重新匯出一份。
+
 ## 2026-10-04（登入只出現一次）
 - 類型：修正
 - 影響檔案：index.html, js/app.js, css/style.css

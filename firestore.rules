@@ -1,5 +1,8 @@
 rules_version = '2';
 
+// 2026-10-04 與 Firebase Console 線上版本同步，並加入 photos 規則、收緊 shares。
+// 修改流程：改這個檔 → 整份貼到 Firebase Console → Firestore → 規則 → 發布。
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -19,6 +22,29 @@ service cloud.firestore {
     match /trips/{tripId} {
       allow read, write: if request.auth != null && request.auth.uid == resource.data.uid;
       allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
+    }
+
+    // Shares: 唯讀分享快照。知道連結（文件 ID）就能讀，但不能列出所有分享
+    match /shares/{shareId} {
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.owner;
+      allow update, delete: if false;
+    }
+
+    // Photos: 只有本人可以讀寫；分享過的照片（shared == true）知道編號的人可以看
+    match /photos/{photoId} {
+      allow get: if resource.data.shared == true
+                 || (request.auth != null && request.auth.uid == resource.data.uid);
+      allow list: if request.auth != null && request.auth.uid == resource.data.uid;
+      allow create: if request.auth != null
+                    && request.auth.uid == request.resource.data.uid
+                    && request.resource.data.data is bytes
+                    && request.resource.data.data.size() < 1000000;
+      // 只允許把照片設為分享（shared），不能改內容或擁有者
+      allow update: if request.auth != null && request.auth.uid == resource.data.uid
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['shared']);
+      allow delete: if request.auth != null && request.auth.uid == resource.data.uid;
     }
   }
 }

@@ -1,6 +1,6 @@
 // JPmap service worker — offline shell + photo caching
 // Bump the version whenever files are updated so clients pick up the new cache.
-const CACHE = 'jpmap-v2';
+const CACHE = 'jpmap-v3';
 
 const SHELL = [
   '.',
@@ -10,6 +10,7 @@ const SHELL = [
   'js/config.js',
   'js/helpers.js',
   'js/map.js',
+  'js/photos.js',
   'manifest.json',
   'apple-touch-icon.png',
   'icon-512.png',

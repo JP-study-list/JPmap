@@ -374,8 +374,9 @@
     <div class="form-row"><label>評分 <span style="color:#bbb;font-weight:400;">（可不評）</span></label>
       <div id="f-rating" class="rating-picker"></div>
     </div>
-    <div class="form-row"><label>照片網址 <span style="color:#bbb;font-weight:400;">（最多 5 張，可不填）</span></label>
+    <div class="form-row"><label>照片 <span style="color:#bbb;font-weight:400;">（最多 5 張，會自動縮小並去除拍攝地點等資訊）</span></label>
       <div id="f-photos"></div>
+      <input type="file" id="f-photo-file" accept="image/*" multiple style="display:none;" onchange="onPhotoFiles(this)">
     </div>
     <div class="form-row"><label>筆記</label><textarea id="f-note" placeholder="記錄感受、推薦理由..."></textarea></div>
     <div class="modal-actions">
@@ -492,6 +493,14 @@
       <div>
         <div class="settings-item-title">匯入 Google 時間軸</div>
         <div class="settings-item-desc">從 Google 時間軸記錄匯入地點與路線</div>
+      </div>
+      <svg class="icon settings-arrow"><use href="#icon-chevron-right"/></svg>
+    </div>
+    <div class="settings-item" onclick="migrateOldPhotos()">
+      <svg class="icon settings-item-icon"><use href="#pin-camera"/></svg>
+      <div>
+        <div class="settings-item-title">搬移舊照片</div>
+        <div class="settings-item-desc" id="migrate-desc">把舊的網址照片搬進 Firestore（只有你看得到）</div>
       </div>
       <svg class="icon settings-arrow"><use href="#icon-chevron-right"/></svg>
     </div>

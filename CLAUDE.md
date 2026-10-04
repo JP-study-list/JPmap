@@ -155,17 +155,19 @@
 > 2026-10-02 由 social-bookmark 視窗的討論整理而來（使用者已確認方向）。金鑰類不寫此處。
 
 ### 技術棧（一行摘要）
-無 build step 的靜態 PWA：`index.html` + `js/app.js`（ES module，主程式）+ `js/config.js` + `js/helpers.js` + `js/map.js`（底圖與免費地理服務）+ `css/style.css`，另有 `share.html`（唯讀分享頁）；Firebase Auth（Email/密碼 + Google 登入）+ Firestore（有開 `persistentLocalCache` 離線快取）；部署 GitHub Pages。地圖：**MapLibre GL JS 5.24.0（jsdelivr CDN）+ OpenFreeMap 底圖**（2026-10-04 取代 Google Maps；6.x 只有 ES module 版、2026-07 才發布，暫不升級）。
+無 build step 的靜態 PWA：`index.html` + `js/app.js`（ES module，主程式）+ `js/config.js` + `js/helpers.js` + `js/map.js`（底圖與免費地理服務）+ `js/photos.js`（照片）+ `css/style.css`，另有 `share.html`（唯讀分享頁）；Firebase Auth（Email/密碼 + Google 登入）+ Firestore（有開 `persistentLocalCache` 離線快取）；部署 GitHub Pages。地圖：**MapLibre GL JS 5.24.0（jsdelivr CDN）+ OpenFreeMap 底圖**（2026-10-04 取代 Google Maps；6.x 只有 ES module 版、2026-07 才發布，暫不升級）。
 
 ### Firebase
 - Project ID：`japan-map-500903`
 - collection 與欄位：
-  - `places`：`name`、`tag`（分類）、`foodType`、`date`、`note`、`photos[]`（圖片網址，最多 5）、`rating`、`icon`、`color`、`tripId`、`wishlist`、`favorite`、`order`、`lat`、`lng`、`uid`、`createdAt`
+  - `places`：`name`、`tag`（分類）、`foodType`、`date`、`note`、`photos[]`（最多 5：`fs:<photos 文件ID>` 或舊的圖片網址）、`rating`、`icon`、`color`、`tripId`、`wishlist`、`favorite`、`order`、`lat`、`lng`、`uid`、`createdAt`
   - `routes`：`name`、`transport`（`drive`/`walk`/`train`）、`points[{lat,lng}]`（目前存檔時降採樣到約 200 點）、`cat`、`color`、`date`、`note`、`fare`、`tripId`、`distanceMeters`、`favorite`、`order`、`uid`、`createdAt`
   - `trips`：`name`、`start`、`end`、`order`、`uid`、`createdAt`
   - `shares`：唯讀分享快照（`tripName`、`tripDate`、`places[]`、`routes[]`、`owner`、`createdAt`），`share.html?id=` 以文件 ID 讀取
+  - `photos`（2026-10-04 起）：`uid`、`data`（Bytes，JPEG，長邊 ≤1280、<900KB、已去除中繼資料）、`w`、`h`、`shared`（分享行程時設 true，有連結的人可讀）、`createdAt`
 - key 設計：全部用 Firestore 自動 ID；每筆帶 `uid`，查詢一律 `where('uid','==',uid)`。
-- Rules：`places`/`routes`/`trips` 只有本人可讀寫。**repo 內 `firestore.rules` 與線上版本不一致（線上另有 `shares` 規則），以 Firebase Console 為準**；階段 0 會校正並同步回 repo。
+- Rules：`places`/`routes`/`trips` 只有本人可讀寫；`shares` 知道 ID 可讀、不可列出；`photos` 本人可讀寫、`shared` 的可被讀取（只能改 `shared` 欄位）。2026-10-04 已與線上同步：**repo 的 `firestore.rules` 是唯一來源**，改完整份貼到 Console 發布。
+- 方案：Spark（免費，超額只會停用不會收費）。Firestore 免費 1 GB，照片每張約 0.2～0.4 MB。
 - 資料量：約 136 個地點（2026-10-02 截圖估算）。
 
 ### 部署
@@ -181,7 +183,8 @@
 - 舊 iOS 捷徑：拍照 → 上傳到 repo `photos/` → 開 `index.html?quickadd=1&lat=&lng=&photo=&date=`。計畫淘汰（見 progress.md）。
 
 ### 已知地雷
-- `photos/` 在公開 repo 中，照片保留了原始中繼資料 → 計畫改存 Firebase（隱私考量），搬完再處理 repo 內檔案（屬刪檔，須先徵得同意）。
+- `photos/` 在公開 repo 中，大部分含 GPS 位置 → 已提供「設定 → 搬移舊照片」搬進 Firestore；搬完後刪除 repo 檔案（與是否清 git 歷史）屬破壞性操作，須先徵得同意。刪除後，舊分享連結的照片會壞（重新分享即可）。
+- 刪除地點時，Firestore 照片在 6 秒復原時間過後才刪（`queueUndo`/`purgeDeletedPhotos`）；備份 JSON 不含照片本體。
 - `share.html` 內複製了一份 config（分類樣式、圖示、交通方式），改 `config.js` 時要同步。底圖則從 `js/map.js` 載入（不再完全獨立）。
 - MapLibre 的 zoom 比 Google 小 1（512px 圖磚）；從舊程式搬數值時要減 1。
 - OpenFreeMap 樣式本身會在 console 印出「Expected value to be of type number, but found null instead.」警告（未修改的樣式也會），可忽略。

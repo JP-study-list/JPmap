@@ -227,12 +227,13 @@ input, select, textarea { font-family: inherit; }
 .star-choice:hover { transform: scale(1.15); }
 .rating-clear { font-size: 11px; color: #aaa; margin-left: 8px; cursor: pointer; }
 .rating-clear:hover { color: #666; }
-.photo-input-row { display: flex; gap: 6px; margin-bottom: 6px; }
-.photo-input-row input { flex: 1; }
-.photo-del { width: 32px; border: 0.5px solid #ddd; border-radius: 8px; background: #fff; color: #999; cursor: pointer; }
-.photo-del:hover { background: #FCEBEB; color: #C0392B; border-color: #f0c4c4; }
-.photo-add { width: 100%; padding: 8px; border: 0.5px dashed #ccc; border-radius: 8px; background: #fafafa; color: #185FA5; font-size: 13px; cursor: pointer; }
-.photo-add:hover { background: #f0f7ff; border-color: #185FA5; }
+#f-photos { display: flex; flex-wrap: wrap; gap: 8px; }
+.photo-thumb { position: relative; width: 72px; height: 72px; border-radius: 8px; overflow: hidden; background: #f0f0f0; }
+.photo-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photo-del { position: absolute; top: 3px; right: 3px; width: 22px; height: 22px; border: none; border-radius: 50%; background: rgba(0,0,0,0.55); color: #fff; font-size: 11px; line-height: 22px; padding: 0; cursor: pointer; }
+.photo-del:hover { background: #C0392B; }
+.photo-add-tile { width: 72px; height: 72px; border: 0.5px dashed #bbb; border-radius: 8px; background: #fafafa; color: #185FA5; font-size: 26px; font-weight: 300; cursor: pointer; }
+.photo-add-tile:hover { background: #f0f7ff; border-color: #185FA5; }
 .route-edit-btn { background: none; border: none; color: #ccc; padding: 2px 4px; border-radius: 5px; display: flex; flex-shrink: 0; align-self: center; cursor: pointer; }
 .route-edit-btn:hover { color: #555; background: #eee; }
 .place-item.dragging, .route-item.dragging { opacity: 0.4; }

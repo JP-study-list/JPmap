@@ -13,6 +13,7 @@ import {
 } from './config.js';
 import { esc, placeIcon, placeColor, routeColor, byOrder, fmtDate, localToday, stripUndefined } from './helpers.js';
 import { BASEMAPS, JAPAN_VIEW, JP_FONTS, loadBaseStyle, searchPlaces, reverseName, fetchRoutes, fmtDistance, fmtDuration } from './map.js';
+import { MAX_PHOTOS, isFsPhoto, compressPhoto, photoUrl, uploadPhoto, deletePhoto, sharePhoto } from './photos.js';
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -64,7 +65,8 @@ let editingTripId = null;        // for trip create/edit modal
 let tripModalReturnToPlace = false;  // after creating a trip from the place modal, reopen place modal
 let pendingIcon = 'food', pendingColor = '#E8833A';  // for the icon/color picker in add/edit modal
 let pendingRating = 0;           // star rating in place modal (0 = none)
-let pendingPhotos = [];          // photo URLs in place modal (max 5)
+let pendingPhotos = [];          // place modal photos (max 5): { ref } saved, or { blob, url, w, h } new
+let removedPhotoRefs = [];       // saved photos removed in the edit modal (deleted on save)
 
 // ── Quick-add via URL (from the iOS photo shortcut) ──
 // ?quickadd=1&lat=..&lng=..&photo=<encoded url>&date=yyyy-MM-dd
@@ -93,7 +95,7 @@ function tryOpenQuickAdd() {
   }
   openAddModal('');
   if (qa.date) document.getElementById('f-date').value = qa.date;
-  if (qa.photo) { pendingPhotos = [qa.photo]; renderPhotoInputs(); }
+  if (qa.photo) { pendingPhotos = [{ ref: qa.photo }]; renderPhotoInputs(); }
 }
 let topTransport = 'drive';       // for top search bar route mode
 let routeClickTarget = null;      // pending {lat,lng,label} when picking origin/dest from map in route mode
@@ -796,7 +798,7 @@ function selectPlace(id) {
   document.getElementById('info-meta').innerHTML =
     `<span style="display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;background:${color}22;color:${color};margin-right:6px;">${p.tag}</span>${p.date || ''}${stars}`;
   document.getElementById('info-note').textContent = p.note || '（尚無筆記）';
-  infoPhotos = Array.isArray(p.photos) ? p.photos : (p.photo ? [p.photo] : []);
+  infoPhotos = placePhotoRefs(p);
   infoPhotoIdx = 0;
   renderInfoCarousel();
   // Show "mark as visited" button only for wishlist places
@@ -812,6 +814,17 @@ function selectPlace(id) {
 
 // ── Info panel photo carousel ──
 let infoPhotos = [], infoPhotoIdx = 0;
+// Photos load asynchronously (Firestore); only apply the result if the <img> still wants it
+function setPhotoSrc(img, ref) {
+  if (!img) return;
+  img.dataset.ref = ref;
+  img.removeAttribute('src');
+  img.style.display = '';
+  photoUrl(db, ref).then((url) => {
+    if (img.dataset.ref !== ref) return;
+    if (url) img.src = url; else img.style.display = 'none';
+  });
+}
 function renderInfoCarousel() {
   const gallery = document.getElementById('info-photos');
   if (!infoPhotos.length) { gallery.classList.add('hidden'); gallery.innerHTML = ''; return; }
@@ -822,9 +835,10 @@ function renderInfoCarousel() {
   gallery.innerHTML = `
     <div class="carousel">
       ${multi ? '<button class="car-nav prev" onclick="infoPhotoNav(-1)">‹</button>' : ''}
-      <img src="${esc(infoPhotos[infoPhotoIdx])}" alt="地點照片" onerror="this.style.display='none'" onclick="openLightbox()" style="cursor:zoom-in;">
+      <img id="info-photo-img" alt="地點照片" onerror="this.style.display='none'" onclick="openLightbox()" style="cursor:zoom-in;">
       ${multi ? '<button class="car-nav next" onclick="infoPhotoNav(1)">›</button>' : ''}
     </div>${dots}`;
+  setPhotoSrc(document.getElementById('info-photo-img'), infoPhotos[infoPhotoIdx]);
   gallery.classList.remove('hidden');
   // Touch swipe (mobile)
   if (multi) {
@@ -854,7 +868,7 @@ window.openLightbox = function() {
 window.closeLightbox = function() { document.getElementById('lightbox').classList.add('hidden'); };
 function renderLightbox() {
   const multi = infoPhotos.length > 1;
-  document.getElementById('lightbox-img').src = infoPhotos[infoPhotoIdx];
+  setPhotoSrc(document.getElementById('lightbox-img'), infoPhotos[infoPhotoIdx]);
   document.getElementById('lightbox-prev').classList.toggle('hidden', !multi);
   document.getElementById('lightbox-next').classList.toggle('hidden', !multi);
   document.getElementById('lightbox-count').textContent = multi ? `${infoPhotoIdx + 1} / ${infoPhotos.length}` : '';
@@ -915,7 +929,8 @@ window.editSelectedPlace = function() {
   document.getElementById('f-gmaps-url').value = '';
   document.getElementById('f-gmaps-hint').classList.add('hidden');
   pendingRating = p.rating || 0; renderRatingPicker();
-  pendingPhotos = Array.isArray(p.photos) ? p.photos.slice() : (p.photo ? [p.photo] : []);
+  pendingPhotos = placePhotoRefs(p).map(ref => ({ ref }));
+  removedPhotoRefs = [];
   renderPhotoInputs();
   document.getElementById('f-wishlist').checked = !!p.wishlist;
   applyWishlistUI(!!p.wishlist);
@@ -936,7 +951,7 @@ window.deleteSelectedPlace = async function() {
   await deletePlace(selectedPlaceId);
   selectedPlaceId = null;
   document.getElementById('info-panel').classList.add('hidden');
-  if (p) { lastDeleted = { places: [{ ...p }], routes: [] }; showUndoBar(1); }
+  if (p) queueUndo({ places: [{ ...p }], routes: [] });
 };
 
 // ══════════════════════════════════════
@@ -956,12 +971,22 @@ function toggleDeleteItem(type, id) {
 let lastDeleted = null;   // { places: [docData...], routes: [docData...] }
 let undoTimer = null;
 
-function showUndoBar(count) {
+function queueUndo(snap) {
+  if (lastDeleted) purgeDeletedPhotos(lastDeleted);  // previous undo chance is gone
+  lastDeleted = snap;
   const bar = document.getElementById('undo-bar');
-  document.getElementById('undo-text').textContent = `已刪除 ${count} 個項目`;
+  document.getElementById('undo-text').textContent = `已刪除 ${snap.places.length + snap.routes.length} 個項目`;
   bar.classList.remove('hidden');
   clearTimeout(undoTimer);
-  undoTimer = setTimeout(hideUndoBar, 6000);
+  undoTimer = setTimeout(() => { purgeDeletedPhotos(lastDeleted); hideUndoBar(); }, 6000);
+}
+// Once undo is no longer possible, delete the Firestore photos of deleted places
+// (unless another place still uses them)
+function purgeDeletedPhotos(snap) {
+  if (!snap) return;
+  const stillUsed = new Set(places.flatMap(placePhotoRefs));
+  snap.places.flatMap(placePhotoRefs).filter(ref => isFsPhoto(ref) && !stillUsed.has(ref))
+    .forEach(ref => deletePhoto(db, ref).catch(err => console.warn('Photo delete error:', err)));
 }
 function hideUndoBar() {
   document.getElementById('undo-bar').classList.add('hidden');
@@ -995,7 +1020,7 @@ window.confirmDelete = async function() {
   const n = snap.places.length + snap.routes.length;
   deleteSelected.clear();
   setMode('view');
-  if (n > 0) { lastDeleted = snap; showUndoBar(n); }
+  if (n > 0) queueUndo(snap);
 };
 
 // ══════════════════════════════════════
@@ -1653,7 +1678,7 @@ function openAddModal(prefillName) {
   document.getElementById('f-gmaps-url').value = '';
   document.getElementById('f-gmaps-hint').classList.add('hidden');
   pendingRating = 0; renderRatingPicker();
-  pendingPhotos = []; renderPhotoInputs();
+  discardPendingPhotos(); renderPhotoInputs();
   document.getElementById('f-date').value = localToday();
   document.getElementById('f-tag').value = '美食';
   applyFoodTypeRow();
@@ -1711,23 +1736,71 @@ function renderRatingPicker() {
 }
 window.pickRating = function(n) { pendingRating = (n === pendingRating) ? 0 : n; renderRatingPicker(); };
 
-// ── Multi-photo URL inputs (max 5) ──
+// ── Place photos (max 5): pick → shrink + strip metadata → upload to Firestore on save ──
+// A place's photos[] holds refs: "fs:<id>" (Firestore) or a plain URL (older photos)
+function placePhotoRefs(p) {
+  return (Array.isArray(p.photos) ? p.photos : (p.photo ? [p.photo] : [])).map(u => String(u).trim()).filter(Boolean);
+}
+
 function renderPhotoInputs() {
   const wrap = document.getElementById('f-photos');
-  let html = pendingPhotos.map((url, i) =>
-    `<div class="photo-input-row">
-      <input type="text" value="${esc(url)}" placeholder="貼上圖片連結 https://..." oninput="updatePhotoUrl(${i}, this.value)">
-      <button type="button" class="photo-del" onclick="removePhotoInput(${i})">✕</button>
+  let html = pendingPhotos.map((item, i) =>
+    `<div class="photo-thumb">
+      <img data-idx="${i}" alt="照片 ${i + 1}">
+      <button type="button" class="photo-del" onclick="removePhotoInput(${i})" aria-label="移除照片">✕</button>
     </div>`
   ).join('');
-  if (pendingPhotos.length < 5) {
-    html += `<button type="button" class="photo-add" onclick="addPhotoInput()">＋ 新增照片</button>`;
+  if (pendingPhotos.length < MAX_PHOTOS) {
+    html += `<button type="button" class="photo-add-tile" onclick="document.getElementById('f-photo-file').click()" aria-label="加照片">＋</button>`;
   }
   wrap.innerHTML = html;
+  wrap.querySelectorAll('img[data-idx]').forEach(img => {
+    const item = pendingPhotos[+img.dataset.idx];
+    if (item.url) img.src = item.url; else setPhotoSrc(img, item.ref);
+  });
 }
-window.addPhotoInput = function() { if (pendingPhotos.length < 5) { pendingPhotos.push(''); renderPhotoInputs(); } };
-window.removePhotoInput = function(i) { pendingPhotos.splice(i, 1); renderPhotoInputs(); };
-window.updatePhotoUrl = function(i, v) { pendingPhotos[i] = v; };  // no re-render (keeps focus)
+
+window.onPhotoFiles = async function(input) {
+  const files = [...input.files].slice(0, MAX_PHOTOS - pendingPhotos.length);
+  input.value = '';  // allow picking the same file again
+  let failed = 0;
+  for (const file of files) {
+    try {
+      const out = await compressPhoto(file);
+      pendingPhotos.push({ ...out, url: URL.createObjectURL(out.blob) });
+      renderPhotoInputs();
+    } catch (err) {
+      console.warn('Photo error:', err);
+      failed++;
+    }
+  }
+  if (failed) alert(`有 ${failed} 張照片無法讀取（格式可能不支援，請先轉成 JPG）。`);
+};
+
+window.removePhotoInput = function(i) {
+  const [item] = pendingPhotos.splice(i, 1);
+  if (item.url) URL.revokeObjectURL(item.url);
+  else if (isFsPhoto(item.ref)) removedPhotoRefs.push(item.ref);
+  renderPhotoInputs();
+};
+
+// Drop unsaved photos from the modal (new uploads never happened, removals are cancelled)
+function discardPendingPhotos() {
+  pendingPhotos.forEach(item => { if (item.url) URL.revokeObjectURL(item.url); });
+  pendingPhotos = [];
+  removedPhotoRefs = [];
+}
+
+// Upload new photos and return the refs to store on the place
+async function savePendingPhotos() {
+  const refs = [];
+  for (const item of pendingPhotos) {
+    if (item.ref) { refs.push(item.ref); continue; }
+    item.ref = await uploadPhoto(db, currentUser.uid, item);  // kept on the item so a retry won't re-upload
+    refs.push(item.ref);
+  }
+  return refs;
+}
 
 // Parse a full Google Maps URL to extract coordinates (and name if present)
 window.parseGmapsUrl = function() {
@@ -1786,35 +1859,51 @@ function applyFoodTypeRow(selected) {
 window.savePlace = async function() {
   const name = document.getElementById('f-name').value.trim();
   if (!name) { document.getElementById('f-name').focus(); return; }
-  const data = {
-    name,
-    tag:   document.getElementById('f-tag').value,
-    date:  getPlaceDateValue(),
-    note:  document.getElementById('f-note').value.trim(),
-    foodType: document.getElementById('f-tag').value === '美食' ? document.getElementById('f-foodtype').value : '',
-    photos: pendingPhotos.map(u => u.trim()).filter(Boolean).slice(0, 5),
-    rating: pendingRating || 0,
-    icon:  pendingIcon,
-    color: pendingColor,
-    tripId: document.getElementById('f-trip').value || '',
-    wishlist: document.getElementById('f-wishlist').checked,
-  };
-  if (editingPlaceId) {
-    await updatePlace(editingPlaceId, data);
-    selectedPlaceId = editingPlaceId;
-    editingPlaceId = null;
-  } else if (pendingLatLng) {
-    data.lat = typeof pendingLatLng.lat === 'function' ? pendingLatLng.lat() : pendingLatLng.lat;
-    data.lng = typeof pendingLatLng.lng === 'function' ? pendingLatLng.lng() : pendingLatLng.lng;
-    await addPlace(data);
-    pendingLatLng = null;
+  const btn = document.querySelector('#add-modal .btn-primary');
+  btn.disabled = true;
+  btn.textContent = pendingPhotos.some(item => !item.ref) ? '上傳照片中…' : '儲存中…';
+  try {
+    const data = {
+      name,
+      tag:   document.getElementById('f-tag').value,
+      date:  getPlaceDateValue(),
+      note:  document.getElementById('f-note').value.trim(),
+      foodType: document.getElementById('f-tag').value === '美食' ? document.getElementById('f-foodtype').value : '',
+      photos: await savePendingPhotos(),
+      rating: pendingRating || 0,
+      icon:  pendingIcon,
+      color: pendingColor,
+      tripId: document.getElementById('f-trip').value || '',
+      wishlist: document.getElementById('f-wishlist').checked,
+    };
+    if (editingPlaceId) {
+      await updatePlace(editingPlaceId, data);
+      selectedPlaceId = editingPlaceId;
+      editingPlaceId = null;
+    } else if (pendingLatLng) {
+      data.lat = typeof pendingLatLng.lat === 'function' ? pendingLatLng.lat() : pendingLatLng.lat;
+      data.lng = typeof pendingLatLng.lng === 'function' ? pendingLatLng.lng() : pendingLatLng.lng;
+      await addPlace(data);
+      pendingLatLng = null;
+    }
+    // Photos removed while editing are deleted only after the place no longer points to them
+    const stillUsed = new Set(places.flatMap(placePhotoRefs));
+    for (const ref of removedPhotoRefs) if (!stillUsed.has(ref)) deletePhoto(db, ref).catch(err => console.warn('Photo delete error:', err));
+    removedPhotoRefs = [];
+    closeModal();
+  } catch (err) {
+    console.error(err);
+    alert('儲存失敗：' + (err && err.message ? err.message : err) + '\n\n資料還在表單裡，可以再按一次儲存。');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '儲存';
   }
-  closeModal();
 };
 
 window.closeModal = function() {
   document.getElementById('add-modal').classList.add('hidden');
   pendingLatLng = null; editingPlaceId = null;
+  discardPendingPhotos();
 };
 
 // ══════════════════════════════════════
@@ -1891,6 +1980,49 @@ window.openStats = function() {
 };
 window.closeStats = function() { document.getElementById('stats-overlay').classList.add('hidden'); };
 
+// ── One-time: move older URL photos (e.g. the repo's photos/ folder) into Firestore ──
+// Each photo is shrunk and stripped of metadata; photos that can't be downloaded keep their URL.
+let migratingPhotos = false;
+window.migrateOldPhotos = async function() {
+  if (migratingPhotos) return;
+  const oldRefs = (p) => placePhotoRefs(p).filter(ref => !isFsPhoto(ref));
+  const todo = places.filter(p => oldRefs(p).length);
+  const total = todo.reduce((n, p) => n + oldRefs(p).length, 0);
+  if (!total) { alert('沒有需要搬移的舊照片。'); return; }
+  if (!confirm(`要把 ${total} 張舊照片搬進 Firestore 嗎？\n\n會縮小並去除拍攝地點等資訊，搬好後只有你看得到。原本的檔案不會被刪除。`)) return;
+
+  migratingPhotos = true;
+  const desc = document.getElementById('migrate-desc');
+  const origDesc = desc.textContent;
+  let done = 0, failed = 0;
+  try {
+    for (const p of todo) {
+      const refs = [];
+      for (const ref of placePhotoRefs(p)) {
+        if (isFsPhoto(ref)) { refs.push(ref); continue; }
+        desc.textContent = `搬移中… ${done + failed + 1} / ${total}`;
+        try {
+          const res = await fetch(new URL(ref, location.href));
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          refs.push(await uploadPhoto(db, currentUser.uid, await compressPhoto(await res.blob())));
+          done++;
+        } catch (err) {
+          console.warn('Photo migrate error:', ref, err);
+          refs.push(ref);
+          failed++;
+        }
+      }
+      await updatePlace(p.id, { photos: refs });
+    }
+    alert(`搬移完成：成功 ${done} 張${failed ? `，${failed} 張無法下載（保留原網址）` : ''}。`);
+  } catch (err) {
+    alert(`搬移中斷（已完成 ${done} 張）：${err && err.message ? err.message : err}\n\n可以再按一次，會從沒搬的繼續。`);
+  } finally {
+    migratingPhotos = false;
+    desc.textContent = origDesc;
+  }
+};
+
 // ── Export / Import (JSON backup) ──
 window.exportData = function() {
   const strip = (o) => { const { id, uid, ...rest } = o; return rest; };
@@ -1899,7 +2031,8 @@ window.exportData = function() {
     exportedAt: new Date().toISOString(),
     places: places.map(strip),
     routes: routes.map(strip),
-    trips: trips.map(strip),
+    // Trips keep their id: importData remaps it so places/routes stay in their trip
+    trips: trips.map(({ uid, ...rest }) => rest),
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -2468,8 +2601,7 @@ window.shareTrip = async function (tripId) {
       lng: p.lng,
       icon: p.icon || '',
       color: p.color || '',
-      photos: (Array.isArray(p.photos) ? p.photos : (p.photo ? [p.photo] : []))
-        .map(u => String(u).trim()).filter(Boolean).slice(0, 5),
+      photos: placePhotoRefs(p).slice(0, MAX_PHOTOS),
     }));
 
   const sRoutes = routes
@@ -2499,6 +2631,12 @@ window.shareTrip = async function (tripId) {
   };
 
   try {
+    // Firestore photos are private: open up this trip's ones to share-link viewers
+    const fsRefs = [...new Set(sPlaces.flatMap(p => p.photos).filter(isFsPhoto))];
+    const shared = await Promise.allSettled(fsRefs.map(ref => sharePhoto(db, ref)));
+    const photoFails = shared.filter(r => r.status === 'rejected').length;
+    if (photoFails) console.warn('Share photo errors:', shared.filter(r => r.status === 'rejected').map(r => r.reason));
+
     const ref = await addDoc(collection(db, 'shares'), payload);
     const url = `${location.origin}${location.pathname.replace(/index\.html$/, '')}share.html?id=${ref.id}`;
 
@@ -2509,8 +2647,9 @@ window.shareTrip = async function (tripId) {
       copied = true;
     } catch (e) { /* 某些瀏覽器不允許，改用提示讓使用者手動複製 */ }
 
+    const photoNote = photoFails ? `\n\n（有 ${photoFails} 張照片無法開放分享，分享頁會看不到）` : '';
     if (copied) {
-      alert('已建立分享連結，並複製到剪貼簿：\n\n' + url);
+      alert('已建立分享連結，並複製到剪貼簿：\n\n' + url + photoNote);
     } else {
       // 複製失敗時用 prompt 讓使用者長按複製
       prompt('分享連結（長按複製）：', url);
