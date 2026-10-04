@@ -155,7 +155,7 @@
 > 2026-10-02 由 social-bookmark 視窗的討論整理而來（使用者已確認方向）。金鑰類不寫此處。
 
 ### 技術棧（一行摘要）
-無 build step 的靜態 PWA：`index.html` + `js/app.js`（ES module，主程式）+ `js/config.js` + `js/helpers.js` + `js/map.js`（底圖與免費地理服務）+ `js/photos.js`（照片）+ `css/style.css`，另有 `share.html`（唯讀分享頁）；Firebase Auth（Email/密碼 + Google 登入）+ Firestore（有開 `persistentLocalCache` 離線快取）；部署 GitHub Pages。地圖：**MapLibre GL JS 5.24.0（jsdelivr CDN）+ OpenFreeMap 底圖**（2026-10-04 取代 Google Maps；6.x 只有 ES module 版、2026-07 才發布，暫不升級）。
+無 build step 的靜態 PWA：`index.html` + `js/app.js`（ES module，主程式）+ `js/config.js` + `js/helpers.js` + `js/map.js`（底圖與免費地理服務）+ `js/photos.js`（照片）+ `js/gestures.js`（觸控手勢）+ `css/style.css`，另有 `share.html`（唯讀分享頁）；Firebase Auth（Email/密碼 + Google 登入）+ Firestore（有開 `persistentLocalCache` 離線快取）；部署 GitHub Pages。地圖：**MapLibre GL JS 5.24.0（jsdelivr CDN）+ OpenFreeMap 底圖**（2026-10-04 取代 Google Maps；6.x 只有 ES module 版、2026-07 才發布，暫不升級）。
 
 ### Firebase
 - Project ID：`japan-map-500903`
@@ -193,5 +193,6 @@
 - 「建築物」分類存在於選單與篩選列，但 `config.js` 沒有對應的預設圖示／顏色（會退回灰色圖釘）。
 - 舊的時間軸匯入（`parseGoogleTimeline`）只支援 Google 舊匯出格式，且每段移動只取起終點（畫成直線）。
 - 日期一律用 `helpers.js` 的 `fmtDate`/`localToday`（本地時區），不用 `toISOString()`。
+- 介面（2026-10-04 依 Apple 原則改版）：開關畫面一律用 `.hidden`，進出動畫靠 CSS（`transition-behavior: allow-discrete` + `@starting-style`），新增會開關的元件時要加進 style.css 的「Enter / exit」區塊。手勢拖曳用 CSS `translate` 屬性（不碰 `transform`）。按鈕的按下縮放會排除用 transform 定位的按鈕（`.car-nav`、`.lb-nav`），新增這類按鈕時也要排除。`share.html` 的樣式是獨立一份，改設計變數時要同步。
 - 登入不能拔：它是資料唯一的保護。資料綁 `uid`，換帳號就看不到舊資料（忘記密碼用登入頁的「忘記密碼？」，不要叫使用者重新註冊）。開啟時先顯示 `#boot-screen`，`onAuthStateChanged` 才決定顯示地圖或登入頁。
 - iPhone：Safari 網頁約 7 天沒開會清掉登入與離線快取，「加入主畫面」的 App 不受影響；主畫面 App 裡 Google 登入（popup）常失敗，用 Email／密碼。

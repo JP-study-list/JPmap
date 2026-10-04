@@ -14,6 +14,7 @@ import {
 import { esc, placeIcon, placeColor, routeColor, byOrder, fmtDate, localToday, stripUndefined } from './helpers.js';
 import { BASEMAPS, JAPAN_VIEW, JP_FONTS, loadBaseStyle, searchPlaces, reverseName, fetchRoutes, fmtDistance, fmtDuration } from './map.js';
 import { MAX_PHOTOS, isFsPhoto, compressPhoto, photoUrl, uploadPhoto, deletePhoto, sharePhoto } from './photos.js';
+import { sheet, drawer, photoViewer } from './gestures.js';
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -2574,6 +2575,34 @@ document.addEventListener('keydown', (e) => {
       }
     }
   }
+});
+
+// ── Touch gestures (gestures.js) ──
+// Cards and sheets: drag down to close. Forms (add place, route details, trip) only stretch and
+// spring back, so a half-filled form is never lost to a stray swipe — they close with 取消.
+sheet(document.getElementById('info-panel'), { onDismiss: () => window.closeInfoPanel() });
+sheet(document.getElementById('poi-card'), { onDismiss: () => window.closePoiCard() });
+sheet(document.getElementById('route-alt-modal'), { onDismiss: () => window.closeRouteAltModal() });
+[
+  ['stats-overlay', 'closeStats'], ['settings-overlay', 'closeSettings'], ['import-overlay', 'closeImport'],
+  ['add-modal', null], ['route-details-modal', null], ['trip-modal', null],
+].forEach(([id, close]) => {
+  const overlay = document.getElementById(id);
+  sheet(overlay.querySelector('.modal-box'), { backdrop: overlay, onDismiss: close && (() => window[close]()) });
+});
+// Phone sidebar: swipe left (on the drawer or the dimmed map) to close
+drawer(document.getElementById('sidebar'), {
+  scrim: document.getElementById('sidebar-scrim'),
+  isOpen: () => sidebarOpen,
+  onClose: () => window.toggleSidebar(),
+  ignore: '#toolbar, #filter-bar',  // these rows scroll sideways
+  enabled: () => window.matchMedia('(max-width: 640px)').matches,
+});
+// Full-screen photo: swipe for the next one, drag down to close
+photoViewer(document.getElementById('lightbox'), document.getElementById('lightbox-img'), {
+  count: () => infoPhotos.length,
+  onStep: (dir) => window.lightboxNav({ stopPropagation() {} }, dir),
+  onClose: () => window.closeLightbox(),
 });
 
 window.selectPlace = selectPlace;

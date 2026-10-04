@@ -10,27 +10,44 @@
   <!-- defer: runs before the module script below, so `maplibregl` is ready -->
   <script defer src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script>
   <style>
+    :root {
+      --accent: #185FA5; --accent-strong: #0C447C; --accent-tint: rgba(24,95,165,0.12);
+      --label: #1c1c1e; --label-2: rgba(60,60,67,0.62); --label-3: rgba(60,60,67,0.32);
+      --fill: rgba(118,118,128,0.12); --fill-hover: rgba(118,118,128,0.18);
+      --glass: rgba(255,255,255,0.72); --glass-thick: rgba(250,250,252,0.84);
+      --blur: blur(20px) saturate(180%); --blur-thick: blur(30px) saturate(180%);
+      --edge: inset 0 0.5px 0 rgba(255,255,255,0.7), 0 0 0 0.5px rgba(0,0,0,0.08);
+      --shadow-s: 0 1px 2px rgba(0,0,0,0.06), 0 4px 14px rgba(0,0,0,0.08);
+      --shadow-l: 0 2px 6px rgba(0,0,0,0.05), 0 12px 40px rgba(0,0,0,0.16);
+      /* Critically damped spring (same as css/style.css) */
+      --spring: cubic-bezier(0.2, 0.8, 0.2, 1); --spring-dur: 0.5s;
+    }
+    @supports (transition-timing-function: linear(0, 1)) {
+      :root { --spring: linear(0, 0.055, 0.173, 0.309, 0.441, 0.558, 0.656, 0.736, 0.8, 0.849, 0.887, 0.916, 0.938, 0.955, 0.967, 0.976, 0.982, 0.987, 0.991, 0.993, 0.995, 0.997, 0.998, 0.998, 1); }
+    }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Hiragino Sans', sans-serif; background: #f5f5f5; color: #1a1a1a; }
-    button { font-family: inherit; cursor: pointer; }
+    html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang TC', 'Hiragino Sans', 'Segoe UI', 'Microsoft JhengHei', sans-serif; background: #f5f5f5; color: var(--label); -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; }
+    button { font-family: inherit; cursor: pointer; touch-action: manipulation; }
+    /* Press feedback on touch-down (buttons positioned with transform keep it) */
+    button:not(.carousel-nav):not(.lb-nav):active { transform: scale(0.97); transition: transform 80ms ease-out; }
 
-    /* Top bar with trip title */
+    /* Top bar with trip title: a floating glass card */
     #topbar {
-      position: absolute; top: 0; left: 0; right: 0; z-index: 20;
-      background: rgba(255,255,255,0.96); backdrop-filter: saturate(180%) blur(8px);
-      border-bottom: 0.5px solid #e5e5e5;
-      padding: calc(env(safe-area-inset-top) + 12px) 16px 12px;
+      position: absolute; top: calc(env(safe-area-inset-top) + 8px); left: 8px; right: 8px; z-index: 20;
+      background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+      border-radius: 18px; box-shadow: var(--edge), var(--shadow-s);
+      padding: 12px 16px;
       display: flex; align-items: center; gap: 10px;
     }
     #topbar .title-wrap { flex: 1; min-width: 0; }
     #trip-title {
-      font-size: clamp(15px, 4vw, 18px); font-weight: 600; color: #1a1a1a;
+      font-size: clamp(17px, 4.6vw, 20px); font-weight: 700; letter-spacing: -0.02em; color: var(--label);
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    #trip-sub { font-size: 12px; color: #888; margin-top: 2px; }
+    #trip-sub { font-size: 13px; color: var(--label-2); margin-top: 2px; }
     #topbar .badge {
-      flex-shrink: 0; font-size: 11px; color: #185FA5;
-      background: #EBF3FC; border-radius: 999px; padding: 3px 9px; font-weight: 500;
+      flex-shrink: 0; font-size: 12px; color: var(--accent);
+      background: var(--accent-tint); border-radius: 999px; padding: 4px 10px; font-weight: 600;
     }
 
     #map { position: absolute; inset: 0; }
@@ -46,50 +63,52 @@
     }
     #state.hidden { display: none; }
     .spinner {
-      width: 34px; height: 34px; border: 3px solid #e0e0e0; border-top-color: #185FA5;
+      width: 34px; height: 34px; border: 3px solid #e0e0e0; border-top-color: var(--accent);
       border-radius: 50%; animation: spin 0.9s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    #state .msg { font-size: 14px; color: #666; line-height: 1.6; }
-    #state .sub { font-size: 12px; color: #aaa; }
+    #state .msg { font-size: 15px; color: var(--label); line-height: 1.6; }
+    #state .sub { font-size: 13px; color: var(--label-2); }
 
-    /* POI info card */
+    /* POI info card: a bottom sheet that slides up and leaves the same way (drag it down to close) */
     #poi-card {
-      position: absolute; bottom: calc(env(safe-area-inset-bottom) + 20px);
-      left: 50%; transform: translateX(-50%) translateY(20px);
-      z-index: 30; width: min(340px, calc(100vw - 32px));
-      background: #fff; border-radius: 14px; padding: 18px;
-      box-shadow: 0 6px 28px rgba(0,0,0,0.2);
-      opacity: 0; pointer-events: none; transition: opacity 0.18s, transform 0.18s;
+      position: absolute; bottom: calc(env(safe-area-inset-bottom) + 8px);
+      left: 50%; transform: translateX(-50%) translateY(calc(100% + 24px));
+      z-index: 30; width: min(380px, calc(100vw - 16px));
+      background: var(--glass-thick); -webkit-backdrop-filter: var(--blur-thick); backdrop-filter: var(--blur-thick);
+      border-radius: 24px; padding: 24px 18px 18px;
+      box-shadow: var(--edge), var(--shadow-l);
+      max-height: calc(100% - env(safe-area-inset-top) - 110px); overflow-y: auto; overscroll-behavior: contain;
+      visibility: hidden; pointer-events: none;
+      transition: transform var(--spring-dur) var(--spring), visibility 0s linear var(--spring-dur);
     }
-    #poi-card.show { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+    #poi-card.show { visibility: visible; pointer-events: auto; transform: translateX(-50%) translateY(0); transition: transform var(--spring-dur) var(--spring), visibility 0s; }
+    #poi-card::before { content: ''; position: absolute; top: 6px; left: 50%; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: var(--label-3); }
     #poi-card-close {
-      position: absolute; top: 12px; right: 12px; background: none; border: none;
-      color: #999; padding: 4px; border-radius: 6px; display: flex; line-height: 0;
+      position: absolute; top: 16px; right: 14px; background: var(--fill); border: none;
+      color: var(--label-2); width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; line-height: 0;
     }
-    #poi-card-close:hover { background: #f0f0f0; color: #555; }
-    #poi-card-close svg { width: 16px; height: 16px; }
+    #poi-card-close svg { width: 14px; height: 14px; }
     #poi-tag {
-      display: inline-block; font-size: 11px; border-radius: 999px;
-      padding: 2px 9px; margin-bottom: 8px; font-weight: 500;
+      display: inline-block; font-size: 12px; border-radius: 999px;
+      padding: 3px 10px; margin-bottom: 8px; font-weight: 500;
     }
-    #poi-name { font-size: 17px; font-weight: 600; color: #1a1a1a; margin-bottom: 8px; padding-right: 24px; }
+    #poi-name { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; color: var(--label); margin-bottom: 10px; padding-right: 32px; }
 
     /* Photo carousel */
     #poi-photos { margin-bottom: 12px; display: none; }
     #poi-photos.show { display: block; }
-    .carousel { position: relative; border-radius: 10px; overflow: hidden; background: #f0f0f0; }
+    .carousel { position: relative; border-radius: 14px; overflow: hidden; background: #f0f0f0; }
     .carousel img {
-      display: block; width: 100%; height: 180px; object-fit: cover;
+      display: block; width: 100%; height: 200px; object-fit: cover;
       cursor: zoom-in; background: #f0f0f0;
     }
     .carousel-nav {
       position: absolute; top: 50%; transform: translateY(-50%);
       width: 30px; height: 30px; border-radius: 50%; border: none;
-      background: rgba(0,0,0,0.45); color: #fff;
+      background: rgba(0,0,0,0.4); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); color: #fff;
       display: flex; align-items: center; justify-content: center; padding: 0;
     }
-    .carousel-nav:hover { background: rgba(0,0,0,0.65); }
     .carousel-nav.prev { left: 8px; }
     .carousel-nav.next { right: 8px; }
     .carousel-nav svg { width: 15px; height: 15px; }
@@ -103,24 +122,27 @@
     }
     .carousel-dots .dot.on { background: #fff; }
 
-    /* Fullscreen lightbox */
+    /* Fullscreen lightbox (swipe for the next photo, drag down to close) */
     #lightbox {
       position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,0.92);
-      display: none; align-items: center; justify-content: center;
+      display: none; align-items: center; justify-content: center; opacity: 0;
+      transition: opacity 0.25s ease;
+      transition: opacity 0.25s ease, display 0.25s allow-discrete;
     }
-    #lightbox.show { display: flex; }
-    #lightbox img { max-width: 96vw; max-height: 90vh; object-fit: contain; }
+    #lightbox.show { display: flex; opacity: 1; }
+    @starting-style { #lightbox.show { opacity: 0; } }
+    #lightbox img { max-width: 96vw; max-height: 90vh; object-fit: contain; border-radius: 8px; }
     #lightbox-close {
       position: absolute; top: calc(env(safe-area-inset-top) + 14px); right: 16px;
-      width: 38px; height: 38px; border-radius: 50%; border: none;
-      background: rgba(255,255,255,0.16); color: #fff;
+      width: 44px; height: 44px; border-radius: 50%; border: none;
+      background: rgba(255,255,255,0.18); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); color: #fff;
       display: flex; align-items: center; justify-content: center;
     }
     #lightbox-close svg { width: 20px; height: 20px; }
     .lb-nav {
       position: absolute; top: 50%; transform: translateY(-50%);
-      width: 42px; height: 42px; border-radius: 50%; border: none;
-      background: rgba(255,255,255,0.16); color: #fff;
+      width: 44px; height: 44px; border-radius: 50%; border: none;
+      background: rgba(255,255,255,0.18); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur); color: #fff;
       display: flex; align-items: center; justify-content: center;
     }
     .lb-nav.prev { left: 14px; }
@@ -129,23 +151,38 @@
     #lb-count {
       position: absolute; bottom: calc(env(safe-area-inset-bottom) + 18px);
       left: 50%; transform: translateX(-50%);
-      color: rgba(255,255,255,0.75); font-size: 13px;
+      color: rgba(255,255,255,0.8); font-size: 14px;
     }
-    #poi-note { font-size: 13px; color: #555; line-height: 1.6; white-space: pre-wrap; word-break: break-word; margin-bottom: 14px; }
-    #poi-note.empty { color: #bbb; font-style: italic; }
+    #poi-note { font-size: 15px; color: var(--label); line-height: 1.6; white-space: pre-wrap; word-break: break-word; margin-bottom: 14px; }
+    #poi-note.empty { color: var(--label-3); font-style: italic; }
     #poi-nav {
       display: flex; align-items: center; justify-content: center; gap: 7px;
-      width: 100%; padding: 11px; background: #185FA5; color: #fff; border: none;
-      border-radius: 9px; font-size: 14px; font-weight: 500; transition: background 0.15s;
+      width: 100%; padding: 14px; background: var(--accent); color: #fff; border: none;
+      border-radius: 14px; font-size: 17px; font-weight: 600; transition: background 0.15s;
     }
-    #poi-nav:hover { background: #0C447C; }
-    #poi-nav svg { width: 17px; height: 17px; }
+    #poi-nav svg { width: 18px; height: 18px; }
 
     /* Footer credit */
     #credit {
       position: absolute; bottom: calc(env(safe-area-inset-bottom) + 8px); right: 10px;
-      z-index: 15; font-size: 11px; color: #aaa;
-      background: rgba(255,255,255,0.85); border-radius: 6px; padding: 3px 8px;
+      z-index: 15; font-size: 12px; color: var(--label-2);
+      background: var(--glass); -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+      border-radius: 8px; padding: 3px 8px;
+    }
+
+    /* Hover: mouse only, so a tap never leaves a stuck highlight */
+    @media (hover: hover) {
+      #poi-card-close:hover { background: var(--fill-hover); color: var(--label); }
+      .carousel-nav:hover { background: rgba(0,0,0,0.6); }
+      #poi-nav:hover { background: var(--accent-strong); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #poi-card { transform: translateX(-50%); opacity: 0; transition: opacity 0.2s ease, visibility 0s linear 0.2s; }
+      #poi-card.show { opacity: 1; transition: opacity 0.2s ease, visibility 0s; }
+      button:not(.carousel-nav):not(.lb-nav):active { transform: none; }
+    }
+    @media (prefers-reduced-transparency: reduce) {
+      #topbar, #poi-card, #credit { background: #fff; -webkit-backdrop-filter: none; backdrop-filter: none; }
     }
   </style>
 </head>
@@ -204,6 +241,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/fireba
 import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 import { loadBaseStyle, JP_FONTS } from "./js/map.js";
 import { isFsPhoto, photoUrl } from "./js/photos.js";
+import { sheet, photoViewer } from "./js/gestures.js";
 
 // ── Firebase (same project as main JPmap) ──
 const firebaseConfig = {
@@ -408,6 +446,13 @@ window.closePoi = function () {
   activePlace = null;
   window.closeLightbox();
 };
+// Touch: drag the card down to close; in the full-screen photo, swipe for the next one or drag down to close
+sheet(poiCard, { onDismiss: () => window.closePoi() });
+photoViewer(document.getElementById('lightbox'), document.getElementById('lightbox-img'), {
+  count: () => poiPhotos.length,
+  onStep: (d) => window.lbStep(d),
+  onClose: () => window.closeLightbox(),
+});
 window.navPoi = function () {
   if (!activePlace) return;
   const url = `https://www.google.com/maps/dir/?api=1&destination=${activePlace.lat},${activePlace.lng}`;
