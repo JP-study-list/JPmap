@@ -122,8 +122,15 @@ window._auth = {
     catch(e) { err.textContent = friendlyError(e.code); err.classList.remove('hidden'); }
   },
   async loginGoogle() {
+    const err = document.getElementById('login-error');
+    err.classList.add('hidden');
     try { await signInWithPopup(auth, googleProvider); }
-    catch(e) { console.error(e); }
+    catch(e) {
+      console.error(e);
+      if (e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') return;
+      err.textContent = friendlyError(e.code);
+      err.classList.remove('hidden');
+    }
   },
   async signup() {
     const email = document.getElementById('s-email').value.trim();
@@ -165,6 +172,10 @@ window._auth = {
 };
 
 function friendlyError(code) {
+  // The API key only accepts requests from approved sites (Google Cloud Console → Credentials)
+  if (String(code).startsWith('auth/requests-from-referer')) {
+    return '這個網址不能登入（API 金鑰只允許正式網址）。請改用 https://jp-study-list.github.io/JPmap/';
+  }
   const m = {
     'auth/invalid-email': '電子郵件格式不正確',
     'auth/user-not-found': '找不到此帳號',
@@ -175,8 +186,13 @@ function friendlyError(code) {
     'auth/missing-email': '請輸入電子郵件',
     'auth/too-many-requests': '嘗試次數太多，請稍後再試',
     'auth/network-request-failed': '網路連線失敗，請檢查網路',
+    'auth/operation-not-allowed': '這種登入方式沒有開啟（Firebase Console → Authentication）',
+    'auth/admin-restricted-operation': '目前不開放註冊新帳號',
+    'auth/unauthorized-domain': '這個網址不在 Firebase 允許登入的網域內',
+    'auth/popup-blocked': '登入視窗被瀏覽器擋住，請允許彈出視窗後再試',
   };
-  return m[code] || '發生錯誤，請再試一次';
+  // Unknown errors: show the code so the real cause is visible
+  return m[code] || `發生錯誤，請再試一次（${code || '未知原因'}）`;
 }
 
 // Home-screen web app (iOS "Add to Home Screen" / installed PWA)
