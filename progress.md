@@ -1,5 +1,13 @@
 # progress.md — 開發歷史（最新在上）
 
+## 2026-10-04（登入只出現一次）
+- 類型：修正
+- 影響檔案：index.html, js/app.js, css/style.css
+- 摘要：開啟時先顯示「載入中」，等 Firebase 還原登入狀態；已登入直接進地圖，不再閃登入畫面，只有真的沒登入才顯示登入頁。載入超過 10 秒顯示「請檢查網路」。登入頁加「忘記密碼？」（寄 Firebase 重設信，帳號與資料不變）。從主畫面 App 開啟時提示用 Email／密碼登入。
+- 原因：使用者覺得登入麻煩、不想要帳號，但登入是資料唯一的保護（repo 公開、Firebase 設定在程式碼裡），所以改成「每台裝置登入一次就記住」。使用者也忘了密碼。
+- 驗證：Playwright + 假 Firebase 測已登入（全程不出現登入頁）、未登入、忘記密碼、主畫面提示、載入逾時，9/9 通過；地圖測試 12/12 通過。
+- 待辦/已知問題：使用者要先找回原帳號（資料綁 uid，新註冊的帳號看不到舊資料）。iPhone 建議用「加入主畫面」開，Safari 網頁約 7 天沒開會被清掉登入。
+
 ## 2026-10-04
 - 類型：重構（階段 1a 換地圖）
 - 影響檔案：js/map.js（新增）, js/app.js, js/config.js, index.html, share.html, css/style.css, sw.js, README.md, CLAUDE.md, project-index.md

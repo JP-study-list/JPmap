@@ -1,6 +1,6 @@
 // ── Firebase ──
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, sendPasswordResetEmail }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, collection, addDoc, updateDoc, deleteDoc, doc, onSnapshot, query, where, writeBatch }
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
@@ -133,6 +133,26 @@ window._auth = {
     try { await createUserWithEmailAndPassword(auth, email, pass); }
     catch(e) { err.textContent = friendlyError(e.code); err.classList.remove('hidden'); }
   },
+  // Sends Firebase's reset email; the account (and its data) stays the same
+  async resetPassword() {
+    const email = document.getElementById('l-email').value.trim();
+    const err  = document.getElementById('login-error');
+    const info = document.getElementById('login-info');
+    err.classList.add('hidden'); info.classList.add('hidden');
+    if (!email) {
+      err.textContent = '請先在上方輸入你的電子郵件，再按「忘記密碼？」';
+      err.classList.remove('hidden');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, email);
+      info.textContent = `如果 ${email} 有帳號，重設密碼的信已寄出（收件匣找不到請看垃圾郵件）。`;
+      info.classList.remove('hidden');
+    } catch(e) {
+      err.textContent = friendlyError(e.code);
+      err.classList.remove('hidden');
+    }
+  },
   async logout() { await signOut(auth); },
   showSignup() {
     document.getElementById('login-screen').classList.add('hidden');
@@ -152,11 +172,21 @@ function friendlyError(code) {
     'auth/email-already-in-use': '此電子郵件已被使用',
     'auth/weak-password': '密碼至少需要 6 個字元',
     'auth/invalid-credential': '電子郵件或密碼錯誤',
+    'auth/missing-email': '請輸入電子郵件',
+    'auth/too-many-requests': '嘗試次數太多，請稍後再試',
+    'auth/network-request-failed': '網路連線失敗，請檢查網路',
   };
   return m[code] || '發生錯誤，請再試一次';
 }
 
+// Home-screen web app (iOS "Add to Home Screen" / installed PWA)
+const isStandalone = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+// Firebase keeps the sign-in (IndexedDB), so a returning user goes straight to the map:
+// the boot screen stays up until the saved session is restored, and the login form is
+// only shown when there is really no signed-in user.
 onAuthStateChanged(auth, (user) => {
+  document.getElementById('boot-screen').classList.add('hidden');
   if (user) {
     currentUser = user;
     document.getElementById('login-screen').classList.add('hidden');
@@ -169,6 +199,7 @@ onAuthStateChanged(auth, (user) => {
     currentUser = null;
     document.getElementById('app').classList.add('hidden');
     document.getElementById('login-screen').classList.remove('hidden');
+    document.getElementById('standalone-hint').classList.toggle('hidden', !isStandalone);
     if (unsubscribePlaces) unsubscribePlaces();
     if (unsubscribeRoutes) unsubscribeRoutes();
     if (unsubscribeTrips) unsubscribeTrips();

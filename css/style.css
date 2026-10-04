@@ -54,6 +54,13 @@ input, select, textarea { font-family: inherit; }
 #login-box h1 { font-size: 20px; font-weight: 600; margin-bottom: 4px; }
 #login-box > p { font-size: 13px; color: #666; margin-bottom: 20px; }
 #login-error, #signup-error { font-size: 12px; padding: 9px 12px; background: #FCEBEB; color: #791F1F; border-radius: 8px; margin-bottom: 14px; }
+#login-info { font-size: 12px; padding: 9px 12px; background: #EAF3DE; color: #27500A; border-radius: 8px; margin-bottom: 14px; line-height: 1.5; }
+#boot-screen { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: #f0f4f8; }
+#boot-msg { font-size: 13px; color: #888; text-align: center; padding: 0 24px; }
+#forgot-link { font-size: 12px; text-align: right; margin: -4px 0 12px; }
+#forgot-link span { color: #185FA5; cursor: pointer; }
+#forgot-link span:hover { text-decoration: underline; }
+#standalone-hint { font-size: 11px; color: #8C2D1E; text-align: center; margin-top: 8px; line-height: 1.5; }
 .form-row { margin-bottom: 12px; position: relative; }
 .form-row label { font-size: 12px; color: #555; display: block; margin-bottom: 4px; }
 .form-row input, .form-row select, .form-row textarea { width: 100%; font-size: 13px; padding: 8px 11px; border: 0.5px solid #d0d0d0; border-radius: 8px; background: #fff; color: #1a1a1a; transition: border-color 0.15s; }

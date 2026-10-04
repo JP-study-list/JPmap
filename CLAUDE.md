@@ -190,3 +190,5 @@
 - 「建築物」分類存在於選單與篩選列，但 `config.js` 沒有對應的預設圖示／顏色（會退回灰色圖釘）。
 - 舊的時間軸匯入（`parseGoogleTimeline`）只支援 Google 舊匯出格式，且每段移動只取起終點（畫成直線）。
 - 日期一律用 `helpers.js` 的 `fmtDate`/`localToday`（本地時區），不用 `toISOString()`。
+- 登入不能拔：它是資料唯一的保護。資料綁 `uid`，換帳號就看不到舊資料（忘記密碼用登入頁的「忘記密碼？」，不要叫使用者重新註冊）。開啟時先顯示 `#boot-screen`，`onAuthStateChanged` 才決定顯示地圖或登入頁。
+- iPhone：Safari 網頁約 7 天沒開會清掉登入與離線快取，「加入主畫面」的 App 不受影響；主畫面 App 裡 Google 登入（popup）常失敗，用 Email／密碼。

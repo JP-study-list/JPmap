@@ -79,21 +79,39 @@
   <symbol id="pin-bridge" viewBox="0 0 24 24"><path d="M2 9h20M4 9v10M20 9v10M12 9v4M8 9v6M16 9v6M2 19h20M4 13c3.5-4 12.5-4 16 0" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
 </svg>
 
+<!-- Boot: shown until we know whether the user is signed in (avoids flashing the login form) -->
+<div id="boot-screen">
+  <div id="login-logo"><svg class="icon"><use href="#icon-map-pin"/></svg></div>
+  <div id="boot-msg">載入中…</div>
+</div>
+<script>
+  // Plain script (not the module) so this still fires if the app module fails to load
+  setTimeout(function () {
+    var boot = document.getElementById('boot-screen');
+    if (boot && !boot.classList.contains('hidden')) {
+      document.getElementById('boot-msg').textContent = '載入較久，請檢查網路連線後重新整理';
+    }
+  }, 10000);
+</script>
+
 <!-- Login -->
-<div id="login-screen">
+<div id="login-screen" class="hidden">
   <div id="login-box">
     <div id="login-logo"><svg class="icon"><use href="#icon-map-pin"/></svg></div>
     <h1>日本旅遊地圖</h1>
     <p>記錄你走過的每一處</p>
     <div id="login-error" class="hidden"></div>
+    <div id="login-info" class="hidden"></div>
     <div class="form-row"><label>電子郵件</label><input type="email" id="l-email" placeholder="your@email.com" autocomplete="email"></div>
     <div class="form-row"><label>密碼</label><input type="password" id="l-password" placeholder="••••••••" autocomplete="current-password"></div>
+    <div id="forgot-link"><span onclick="window._auth.resetPassword()">忘記密碼？</span></div>
     <button class="btn-primary" onclick="window._auth.login()">登入</button>
     <div id="login-divider">或</div>
     <button id="google-btn" onclick="window._auth.loginGoogle()">
       <svg width="16" height="16" viewBox="0 0 48 48" style="margin-right:8px;flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/></svg>
       使用 Google 帳號登入
     </button>
+    <div id="standalone-hint" class="hidden">主畫面 App 建議用上方 Email／密碼登入（Google 登入在這裡常失敗）</div>
     <div id="signup-link">還沒有帳號？<span onclick="window._auth.showSignup()">註冊</span></div>
   </div>
 </div>
