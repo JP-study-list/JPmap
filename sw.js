@@ -1,6 +1,6 @@
 // JPmap service worker — offline shell + photo caching
 // Bump the version whenever files are updated so clients pick up the new cache.
-const CACHE = 'jpmap-v1';
+const CACHE = 'jpmap-v2';
 
 const SHELL = [
   '.',
@@ -9,6 +9,7 @@ const SHELL = [
   'js/app.js',
   'js/config.js',
   'js/helpers.js',
+  'js/map.js',
   'manifest.json',
   'apple-touch-icon.png',
   'icon-512.png',
@@ -31,7 +32,7 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
-  if (url.origin !== location.origin) return;  // let Maps/Firebase/CDN pass through
+  if (url.origin !== location.origin) return;  // let map tiles/Firebase/CDN pass through
 
   // Photos: immutable filenames → cache-first
   if (url.pathname.includes('/photos/')) {

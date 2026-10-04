@@ -155,7 +155,7 @@
 > 2026-10-02 由 social-bookmark 視窗的討論整理而來（使用者已確認方向）。金鑰類不寫此處。
 
 ### 技術棧（一行摘要）
-無 build step 的靜態 PWA：`index.html` + `js/app.js`（ES module，主程式）+ `js/config.js` + `js/helpers.js` + `css/style.css`，另有獨立的 `share.html`（唯讀分享頁）；Firebase Auth（Email/密碼 + Google 登入）+ Firestore（有開 `persistentLocalCache` 離線快取）；部署 GitHub Pages。地圖目前用 Google Maps，**已停止計費、無法正常顯示，階段 1 要換成免費地圖**。
+無 build step 的靜態 PWA：`index.html` + `js/app.js`（ES module，主程式）+ `js/config.js` + `js/helpers.js` + `js/map.js`（底圖與免費地理服務）+ `css/style.css`，另有 `share.html`（唯讀分享頁）；Firebase Auth（Email/密碼 + Google 登入）+ Firestore（有開 `persistentLocalCache` 離線快取）；部署 GitHub Pages。地圖：**MapLibre GL JS 5.24.0（jsdelivr CDN）+ OpenFreeMap 底圖**（2026-10-04 取代 Google Maps；6.x 只有 ES module 版、2026-07 才發布，暫不升級）。
 
 ### Firebase
 - Project ID：`japan-map-500903`
@@ -173,12 +173,20 @@
 - 另有遠端分支 `clone`（刪掉 `photos/` 與 `share.html` 的版本，用途待向使用者確認）。
 
 ### 外部服務現況
-- Google Maps JS API、Places API (New)（搜尋自動完成、點 POI）、Directions（算路線）、Geocoder（反查）：試用期結束後停用，2026-10-02 確認地圖出現「For development purposes only」。
+- 地圖服務（2026-10-04 起，全部免費、免金鑰，皆支援 CORS）：
+  - **OpenFreeMap** 底圖：無用量上限；必須顯示出處（樣式內建，MapLibre 右下角自動顯示）。彩色 `liberty`／淡色 `positron`。
+  - **Nominatim**（OSM 搜尋／反查）：每秒最多 1 次（`map.js` 內有佇列）、**禁止邊打邊搜**，所以只在按 Enter 時搜尋。繁中可搜到知名景點，小店常沒資料。
+  - **OSRM**（FOSSGIS 公共伺服器 `routing.openstreetmap.de`）：開車（含替代路線）、走路；限非商業、每秒 1 次、不保證穩定。**沒有電車路線**，電車一律手繪。
+- Google Maps JS API、Places、Directions、Geocoder：已停用且程式不再使用。**注意：舊 Maps 金鑰與 `config.js` 的 Firebase `apiKey` 是同一把，絕不可刪除**（會讓登入與資料庫失效）；如要收斂，只在 Google Cloud Console 的金鑰「API 限制」取消 Maps 相關 API。
 - 舊 iOS 捷徑：拍照 → 上傳到 repo `photos/` → 開 `index.html?quickadd=1&lat=&lng=&photo=&date=`。計畫淘汰（見 progress.md）。
 
 ### 已知地雷
 - `photos/` 在公開 repo 中，照片保留了原始中繼資料 → 計畫改存 Firebase（隱私考量），搬完再處理 repo 內檔案（屬刪檔，須先徵得同意）。
-- `share.html` 內複製了一份 config（分類樣式、圖示、交通方式），改 `config.js` 時要同步。
+- `share.html` 內複製了一份 config（分類樣式、圖示、交通方式），改 `config.js` 時要同步。底圖則從 `js/map.js` 載入（不再完全獨立）。
+- MapLibre 的 zoom 比 Google 小 1（512px 圖磚）；從舊程式搬數值時要減 1。
+- OpenFreeMap 樣式本身會在 console 印出「Expected value to be of type number, but found null instead.」警告（未修改的樣式也會），可忽略。
+- 我們的圖層（路線、地點、預覽、手繪）在切換底圖時會被 `setStyle` 清掉，靠 `onStyleLoad` 依 `overlayData` 重建；新增圖層時要放進 `addOverlayLayers`。
+- 路線存檔的降採樣（`saveRouteFromResult`）實際最多約 2×200 點（沿用舊邏輯），階段 2 重新設計。
 - 「建築物」分類存在於選單與篩選列，但 `config.js` 沒有對應的預設圖示／顏色（會退回灰色圖釘）。
 - 舊的時間軸匯入（`parseGoogleTimeline`）只支援 Google 舊匯出格式，且每段移動只取起終點（畫成直線）。
 - 日期一律用 `helpers.js` 的 `fmtDate`/`localToday`（本地時區），不用 `toISOString()`。

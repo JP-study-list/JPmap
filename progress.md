@@ -1,5 +1,16 @@
 # progress.md — 開發歷史（最新在上）
 
+## 2026-10-04
+- 類型：重構（階段 1a 換地圖）
+- 影響檔案：js/map.js（新增）, js/app.js, js/config.js, index.html, share.html, css/style.css, sw.js, README.md, CLAUDE.md, project-index.md
+- 摘要：Google Maps 全面換成 MapLibre GL JS 5.24.0 + OpenFreeMap 底圖（彩色／淡色可在設定切換，地名顯示日文，淡色版補上店家圖示）。標記改為地圖圖層（叢集、依縮放調整大小、選取放大照舊），路線、預覽、替代路線、手繪都改成 GeoJSON 圖層。頂部搜尋改 Nominatim（按 Enter 才搜），點底圖店家顯示店名與類型，路線模式點地圖改用 Nominatim 反查。算路線改 OSRM（開車可選替代路線、走路），電車直接手繪，找不到路線時可改手繪。`share.html` 一併換掉。移除 Google Maps 與 MarkerClusterer 的載入。
+- 原因：Google Maps 試用期結束、地圖失效；使用者選擇免費方案（2026-10-04 確認：先換地圖再做照片、地名用日文、底圖做成可切換、分享頁之後要顯示照片）。
+- 驗證：在本機用 Playwright + 假 Firebase（不連正式資料）實測地圖顯示、標記／叢集／路線點擊、滑鼠提示、底圖切換、搜尋、點店家、新增地點、開車替代路線、走路路線、電車手繪、餐廳模式、隱藏路線、快速新增網址、手機版、分享頁。
+- 待辦/已知問題：
+  - 在 `maplibre` 分支，**尚未合併上 main**（main 即上線）；需使用者本機登入實測後再合併。
+  - 舊 Maps 金鑰＝Firebase `apiKey`，不可刪除（見 CLAUDE.md §8）。
+  - 1b 照片改存 Firestore（分享頁要顯示照片）；1c 捷徑新增店家（等分享連結）。
+
 ## 2026-10-02
 - 類型：新增（專案規劃）
 - 影響檔案：CLAUDE.md, progress.md, project-index.md（新增，尚未 commit）

@@ -90,8 +90,9 @@ export const ICON_SVG_PATHS = {
 // Restaurant sub-types (second dropdown when tag = 美食)
 export const FOOD_TYPES = ['拉麵', '壽司', '燒肉', '丼飯定食', '漢堡', '蕎麥麵', '義大利麵', '咖喱', '居酒屋', '甜點', '咖啡廳', '其他'];
 
-// Marker base scale at zoom 14 (inverted: zoom out = bigger markers)
-export const MARKER_BASE_ZOOM = 14;
+// Marker base scale at zoom 13 (inverted: zoom out = bigger markers)
+// MapLibre zoom 13 = old Google Maps zoom 14 (MapLibre zoom levels are one lower)
+export const MARKER_BASE_ZOOM = 13;
 export const MARKER_BASE_SCALE = 7;
 export const MARKER_MIN_SCALE = 3;
 export const MARKER_MAX_SCALE = 13;

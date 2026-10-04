@@ -12,6 +12,7 @@ import {
   MARKER_BASE_ZOOM, MARKER_BASE_SCALE, MARKER_MIN_SCALE, MARKER_MAX_SCALE, FOOD_TYPES,
 } from './config.js';
 import { esc, placeIcon, placeColor, routeColor, byOrder, fmtDate, localToday, stripUndefined } from './helpers.js';
+import { BASEMAPS, JAPAN_VIEW, JP_FONTS, loadBaseStyle, searchPlaces, reverseName, fetchRoutes, fmtDistance, fmtDuration } from './map.js';
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -19,32 +20,39 @@ const auth = getAuth(fbApp);
 const db = initializeFirestore(fbApp, { localCache: persistentLocalCache() });
 const googleProvider = new GoogleAuthProvider();
 
-// Build a Google Maps marker icon (data-URI SVG), with a cache so identical
-// icon+color+size combos are generated only once (faster marker refresh).
-const markerIconCache = new Map();
-function buildMarkerIcon(iconKey, color, scale) {
-  const size = Math.round(scale * 3.2);
-  const cacheKey = `${iconKey}|${color}|${size}`;
-  if (markerIconCache.has(cacheKey)) return markerIconCache.get(cacheKey);
-  const glyph = ICON_SVG_PATHS[iconKey] || ICON_SVG_PATHS.pin;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 24 24">
-    <circle cx="12" cy="12" r="11" fill="${color}" stroke="#fff" stroke-width="1.5"/>
-    <g transform="translate(2.6 2.6) scale(0.78)">${glyph}</g>
-  </svg>`;
-  const icon = {
-    url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
-    scaledSize: new google.maps.Size(size, size),
-    anchor: new google.maps.Point(size / 2, size / 2),
-  };
-  markerIconCache.set(cacheKey, icon);
-  return icon;
+// Marker images: one SVG image per icon+color, registered with the map and drawn by a
+// symbol layer (size per zoom comes from markerSizeExpr). Cached across style swaps.
+const MARKER_PX = 48;  // CSS px at icon-size 1 (rasterized at 2× for sharpness)
+const markerImageCache = new Map();
+function loadMarkerImage(key) {
+  if (!markerImageCache.has(key)) {
+    const [iconKey, color] = key.split('|');
+    const glyph = ICON_SVG_PATHS[iconKey] || ICON_SVG_PATHS.pin;
+    const px = MARKER_PX * 2;
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${px}" height="${px}" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="11" fill="${color}" stroke="#fff" stroke-width="1.5"/>
+      <g transform="translate(2.6 2.6) scale(0.78)">${glyph}</g>
+    </svg>`;
+    markerImageCache.set(key, new Promise((resolve, reject) => {
+      const img = new Image(px, px);
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg);
+    }));
+  }
+  return markerImageCache.get(key);
+}
+async function ensureMarkerImages(keys) {
+  await Promise.allSettled(keys.map(async (key) => {
+    const img = await loadMarkerImage(key);
+    if (mapReady && !map.hasImage(key)) map.addImage(key, img, { pixelRatio: 2 });
+  }));
 }
 
 // ── State ──
-let map, directionsService, directionsRenderer, autocompleteService, placesService;
+let map, mapReady = false;       // mapReady: style loaded and overlay layers added
 let currentUser, unsubscribePlaces, unsubscribeRoutes, unsubscribeTrips;
 let places = [], routes = [], trips = [];
-let markers = {}, polylines = {};
 let mode = 'view', activeTab = 'places', currentFilter = '全部';
 let viewMode = 'all';            // 'all' (flat) | 'trips' (grouped by year)
 let selectedTripId = null;       // currently expanded/selected trip in trips view
@@ -81,8 +89,7 @@ function tryOpenQuickAdd() {
   urlQuickAdd = null;
   if (qa.lat !== null && qa.lng !== null) {
     pendingLatLng = { lat: qa.lat, lng: qa.lng };
-    map.panTo(pendingLatLng);
-    map.setZoom(15);
+    map.jumpTo({ center: [qa.lng, qa.lat], zoom: 14 });
   }
   openAddModal('');
   if (qa.date) document.getElementById('f-date').value = qa.date;
@@ -170,108 +177,265 @@ onAuthStateChanged(auth, (user) => {
 });
 
 // ── Map ──
-function initMapWhenReady() {
-  if (window._mapReady && !map) initGoogleMap();
-  else if (!map) window._onMapReady = initGoogleMap;
+// MapLibre + OpenFreeMap. Our data is drawn from GeoJSON overlay sources; overlayData keeps
+// the latest data so it can be restored after a basemap swap (setStyle drops custom layers).
+const EMPTY_FC = { type: 'FeatureCollection', features: [] };
+const overlayData = { routes: EMPTY_FC, places: EMPTY_FC, preview: EMPTY_FC, alts: EMPTY_FC, draw: EMPTY_FC };
+function setOverlay(id, data) {
+  overlayData[id] = data;
+  const src = mapReady && map.getSource(id);
+  if (src) src.setData(data);
+}
+function lineFeature(points, properties) {
+  return { type: 'Feature', geometry: { type: 'LineString', coordinates: points.map(p => [p.lng, p.lat]) }, properties };
 }
 
-function initGoogleMap() {
-  map = new google.maps.Map(document.getElementById('map'), {
-    center: { lat: 36.2, lng: 138.5 },
-    zoom: 5,
-    mapTypeControl: false,
-    streetViewControl: false,
-    fullscreenControl: false,
-    zoomControl: false,
-    gestureHandling: 'greedy',
-    clickableIcons: true,  // keep Google's POI icons clickable
+const CLUSTER_MAX_ZOOM = 7;  // markers cluster only when zoomed out below this (whole-Japan view)
+let basemap = 'liberty';     // 'liberty' (colorful) | 'positron' (pale), remembered per device
+try { const saved = localStorage.getItem('jpmap.basemap'); if (BASEMAPS[saved]) basemap = saved; } catch {}
+let poiLayerIds = [];        // base-style layers that show shops/stations (clickable)
+
+let mapInit = null;
+function initMapWhenReady() {
+  if (!mapInit) mapInit = initMap().catch((err) => {
+    console.error('Map init error:', err);
+    mapInit = null;
+    document.getElementById('map').innerHTML = '<div class="map-error">地圖載入失敗，請檢查網路後重新整理</div>';
   });
+}
 
-  directionsService = new google.maps.DirectionsService();
-  directionsRenderer = new google.maps.DirectionsRenderer({ suppressMarkers: true, preserveViewport: true });
-  // New Places API classes are loaded lazily via importLibrary in the search/POI functions.
-
-  map.addListener('click', (e) => {
-    // MANUAL DRAW MODE (train fallback): each click adds a point along the track
-    if (manualDraw) {
-      if (e.placeId) e.stop();
-      addManualDrawPoint(e.latLng);
-      return;
-    }
-
-    // ROUTE MODE: when the search bar is in route mode, clicking the map lets the user
-    // set that point as origin or destination (works on both POIs and blank spots).
-    if (searchMode === 'route') {
-      if (e.placeId) {
-        e.stop();
-        // Fetch the POI's name so the route input shows a readable label
-        handleRoutePointPick(e.latLng, e.placeId);
-      } else {
-        handleRoutePointPick(e.latLng, null);
-      }
-      return;
-    }
-
-    // If a built-in POI was clicked, e.placeId is set — show our own info card instead of Google's
-    if (e.placeId) {
-      e.stop();  // prevent Google's default POI info window
-      if (mode === 'pin') {
-        handlePoiClick(e.placeId, e.latLng, true);
-      } else {
-        handlePoiClick(e.placeId, e.latLng, false);
-      }
-      return;
-    }
-    if (mode === 'pin') {
-      pendingLatLng = e.latLng;
-      editingPlaceId = null;
-      openAddModal();
-    }
+async function initMap() {
+  const style = await loadBaseStyle(basemap);
+  document.getElementById('map').innerHTML = '';
+  map = new maplibregl.Map({
+    container: 'map',
+    style: structuredClone(style),
+    center: JAPAN_VIEW.center,
+    zoom: JAPAN_VIEW.zoom,
+    localIdeographFontFamily: JP_FONTS,
+    attributionControl: { compact: true },
+    // Keep the map north-up and flat, like before
+    dragRotate: false,
+    pitchWithRotate: false,
+    touchPitch: false,
   });
+  map.touchZoomRotate.disableRotation();
+  map.keyboard.disableRotation();
 
-  // Double-click finishes a manual draw
-  map.addListener('dblclick', (e) => {
-    if (manualDraw) { e.stop(); window.finishManualDraw(); }
-  });
-
-  // Rescale markers as zoom changes
-  map.addListener('zoom_changed', () => { syncPlaceMarkers(); });
+  map.on('style.load', onStyleLoad);
+  map.on('click', onMapClick);
+  // Double-click finishes a manual draw (instead of zooming in)
+  map.on('dblclick', (e) => { if (manualDraw) { e.preventDefault(); window.finishManualDraw(); } });
+  map.on('mousemove', onMapHover);
+  map.on('mouseout', hideRouteTooltip);
 
   setupTopSearch();
+  tryOpenQuickAdd();
 }
 
-// Handle clicking a built-in Google POI icon: fetch details (new Places API), show info card
-async function handlePoiClick(placeId, latLng, addImmediately) {
-  try {
-    const { Place } = await google.maps.importLibrary('places');
-    const place = new Place({ id: placeId });
-    await place.fetchFields({ fields: ['displayName', 'location', 'formattedAddress', 'rating', 'userRatingCount'] });
-    const loc = place.location || latLng;
-    if (addImmediately) {
-      pendingLatLng = loc;
-      editingPlaceId = null;
-      openAddModal(place.displayName || '');
-      return;
-    }
-    showPoiCard(place, loc);
-  } catch (err) {
-    console.warn('POI details error:', err);
+// Runs on first load and after every basemap swap
+function onStyleLoad() {
+  poiLayerIds = map.getStyle().layers.filter(l => l['source-layer'] === 'poi').map(l => l.id);
+  if (!map.getSource('places')) addOverlayLayers();
+  mapReady = true;
+  syncPlaceMarkers();  // re-registers marker images (a style swap clears them)
+  syncRoutePolylines();
+}
+
+function addOverlayLayers() {
+  ['routes', 'preview', 'alts', 'draw'].forEach(id => map.addSource(id, { type: 'geojson', data: overlayData[id] }));
+  map.addSource('places', {
+    type: 'geojson', data: overlayData.places,
+    cluster: true, clusterMaxZoom: CLUSTER_MAX_ZOOM - 1, clusterRadius: 50,
+  });
+  const round = { 'line-join': 'round', 'line-cap': 'round' };
+
+  // Saved routes: solid line + per-transport dash marks + a wide invisible line for easier clicks
+  map.addLayer({
+    id: 'route-line', type: 'line', source: 'routes', layout: round,
+    paint: {
+      'line-color': ['get', 'color'],
+      'line-width': ['case', ['get', 'sel'], 5, 3],
+      'line-opacity': ['case', ['get', 'sel'], 1, 0.75],
+    },
+  });
+  Object.entries(TRANSPORT).forEach(([key, t]) => map.addLayer({
+    id: `route-dash-${key}`, type: 'line', source: 'routes', filter: ['==', ['get', 'transport'], key],
+    // 6px marks repeating every dash[0]+dash[1] px (dasharray is in line widths)
+    paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-dasharray': [2, (t.dash[0] + t.dash[1] - 6) / 3] },
+  }));
+  map.addLayer({
+    id: 'route-hit', type: 'line', source: 'routes',
+    paint: { 'line-color': '#000', 'line-width': 14, 'line-opacity': 0 },
+  });
+
+  // Computed route preview, driving alternatives, manual drawing
+  map.addLayer({
+    id: 'preview-line', type: 'line', source: 'preview', layout: round,
+    paint: { 'line-color': ['get', 'color'], 'line-width': 4, 'line-opacity': 0.6 },
+  });
+  map.addLayer({
+    id: 'alt-line', type: 'line', source: 'alts',
+    layout: { ...round, 'line-sort-key': ['case', ['get', 'sel'], 10, 1] },
+    paint: {
+      'line-color': ['case', ['get', 'sel'], '#185FA5', '#9AA5B1'],
+      'line-width': ['case', ['get', 'sel'], 6, 4],
+      'line-opacity': ['case', ['get', 'sel'], 0.95, 0.5],
+    },
+  });
+  map.addLayer({
+    id: 'draw-line', type: 'line', source: 'draw', layout: round,
+    filter: ['==', ['geometry-type'], 'LineString'],
+    paint: { 'line-color': ['get', 'color'], 'line-width': 4, 'line-opacity': 0.8 },
+  });
+  map.addLayer({
+    id: 'draw-points', type: 'circle', source: 'draw',
+    filter: ['==', ['geometry-type'], 'Point'],
+    paint: { 'circle-radius': 4, 'circle-color': ['get', 'color'], 'circle-stroke-width': 1.5, 'circle-stroke-color': '#fff' },
+  });
+
+  // Places: brand-colored clusters when zoomed out, icon markers otherwise
+  map.addLayer({
+    id: 'place-clusters', type: 'circle', source: 'places', filter: ['has', 'point_count'],
+    paint: {
+      'circle-color': '#185FA5', 'circle-opacity': 0.92,
+      'circle-radius': ['step', ['get', 'point_count'], 18, 10, 21, 50, 25],
+      'circle-stroke-width': 2.5, 'circle-stroke-color': '#fff',
+    },
+  });
+  map.addLayer({
+    id: 'place-cluster-count', type: 'symbol', source: 'places', filter: ['has', 'point_count'],
+    layout: {
+      'text-field': ['get', 'point_count_abbreviated'], 'text-font': ['Noto Sans Bold'], 'text-size': 13,
+      'text-allow-overlap': true, 'text-ignore-placement': true,
+    },
+    paint: { 'text-color': '#fff' },
+  });
+  map.addLayer({
+    id: 'place-markers', type: 'symbol', source: 'places', filter: ['!', ['has', 'point_count']],
+    layout: {
+      'icon-image': ['get', 'icon'], 'icon-size': markerSizeExpr(),
+      'icon-allow-overlap': true, 'icon-ignore-placement': true,
+      'symbol-sort-key': ['case', ['get', 'sel'], 1, 0],  // selected marker drawn on top
+    },
+  });
+}
+
+// Marker size per zoom, same curve as before (inverted: zooming OUT enlarges markers so they
+// stay visible over all of Japan); the selected marker is 1.35× larger.
+function markerSizeExpr() {
+  const SLOPE = 0.55;
+  const zoomAt = (scale) => MARKER_BASE_ZOOM + (MARKER_BASE_SCALE - scale) / SLOPE;
+  const size = (scale) => ['case', ['get', 'sel'], scale * 3.2 * 1.35 / MARKER_PX, scale * 3.2 / MARKER_PX];
+  return ['interpolate', ['linear'], ['zoom'],
+    zoomAt(MARKER_MAX_SCALE), size(MARKER_MAX_SCALE),
+    zoomAt(MARKER_MIN_SCALE), size(MARKER_MIN_SCALE)];
+}
+
+// Top-most rendered feature of the given layers at a screen point (pad = hit tolerance in px)
+function featureAt(point, layers, pad = 0) {
+  const box = [[point.x - pad, point.y - pad], [point.x + pad, point.y + pad]];
+  return map.queryRenderedFeatures(box, { layers })[0];
+}
+function poiAt(point) {
+  if (!poiLayerIds.length) return null;
+  const box = [[point.x - 6, point.y - 6], [point.x + 6, point.y + 6]];
+  return map.queryRenderedFeatures(box, { layers: poiLayerIds }).find(f => f.properties.name) || null;
+}
+function poiName(f) { return f.properties['name:ja'] || f.properties.name; }
+function poiLatLng(f) { const [lng, lat] = f.geometry.coordinates; return { lat, lng }; }
+
+function onMapClick(e) {
+  if (!mapReady) return;
+  const ll = { lat: e.lngLat.lat, lng: e.lngLat.lng };
+
+  // MANUAL DRAW MODE: each click adds a point along the track
+  if (manualDraw) { addManualDrawPoint(ll); return; }
+
+  // Driving alternatives: clicking a candidate line selects it
+  if (altPickerData) {
+    const alt = featureAt(e.point, ['alt-line'], 6);
+    if (alt) { window.selectAltRoute(alt.properties.idx); return; }
   }
+
+  const marker = featureAt(e.point, ['place-markers']);
+  if (marker) { selectPlace(marker.properties.id); return; }
+  const cluster = featureAt(e.point, ['place-clusters']);
+  if (cluster) { zoomIntoCluster(cluster); return; }
+
+  const poi = poiAt(e.point);
+  // ROUTE MODE: when the search bar is in route mode, clicking the map lets the user
+  // set that point as origin or destination (works on both POIs and blank spots).
+  if (searchMode === 'route') {
+    if (poi) handleRoutePointPick(poiLatLng(poi), poiName(poi));
+    else handleRoutePointPick(ll, null);
+    return;
+  }
+
+  const route = featureAt(e.point, ['route-hit']);
+  if (route) { selectRoute(route.properties.id); return; }
+  // A shop/station icon on the base map → our own info card (or straight to the form in pin mode)
+  if (poi) { handlePoiClick(poi, mode === 'pin'); return; }
+  if (mode === 'pin') {
+    pendingLatLng = ll;
+    editingPlaceId = null;
+    openAddModal();
+  }
+}
+
+async function zoomIntoCluster(f) {
+  const zoom = await map.getSource('places').getClusterExpansionZoom(f.properties.cluster_id);
+  map.easeTo({ center: f.geometry.coordinates, zoom });
+}
+
+// Hover: pointer cursor over clickable things, place name as tooltip, route info card
+function onMapHover(e) {
+  if (!mapReady) return;
+  const place = featureAt(e.point, ['place-markers', 'place-clusters']);
+  const route = !place && featureAt(e.point, ['route-hit']);
+  const alt = altPickerData && featureAt(e.point, ['alt-line'], 6);
+  const poi = !place && !route && poiAt(e.point);
+  map.getCanvas().title = (place && place.properties.name) || '';
+  const r = route && routes.find(x => x.id === route.properties.id);
+  if (r) showRouteTooltip(e.lngLat, r); else hideRouteTooltip();
+  updateMapCursor(!!(place || route || alt || poi));
+}
+
+function updateMapCursor(hovering) {
+  if (!map) return;
+  map.getCanvas().style.cursor = manualDraw ? 'crosshair' : hovering ? 'pointer' : mode === 'pin' ? 'crosshair' : '';
+}
+
+// OpenMapTiles POI classes → short Chinese label for the info card
+const POI_CLASS_LABEL = {
+  restaurant: '餐廳', fast_food: '速食', cafe: '咖啡廳', bar: '酒吧', beer: '酒吧', ice_cream: '甜點',
+  bakery: '麵包店', shop: '商店', grocery: '超市', clothing_store: '服飾', alcohol_shop: '酒類專賣',
+  lodging: '住宿', railway: '車站', bus: '公車站', aerialway: '纜車', ferry_terminal: '渡輪碼頭',
+  place_of_worship: '寺社', castle: '城', museum: '博物館', art_gallery: '美術館', attraction: '景點',
+  park: '公園', zoo: '動物園', theatre: '劇場', cinema: '電影院', stadium: '體育場', campsite: '露營地',
+  hospital: '醫院', school: '學校', college: '大學', library: '圖書館', town_hall: '公所', post: '郵局',
+  fuel: '加油站', parking: '停車場', harbor: '港口',
+};
+
+function handlePoiClick(f, addImmediately) {
+  const name = poiName(f);
+  const loc = poiLatLng(f);
+  if (addImmediately) {
+    pendingLatLng = loc;
+    editingPlaceId = null;
+    openAddModal(name);
+    return;
+  }
+  showPoiCard(name, POI_CLASS_LABEL[f.properties.class] || '', loc);
 }
 
 let poiCardData = null;
-function showPoiCard(place, loc) {
-  const name = place.displayName || '未命名地點';
+function showPoiCard(name, category, loc) {
   poiCardData = { name, loc };
   document.getElementById('poi-card-name').textContent = name;
-  const addr = place.formattedAddress || '';
-  let metaHtml = addr ? `<div class="poi-card-addr">${esc(addr)}</div>` : '';
-  if (place.rating) {
-    metaHtml += `<div class="poi-card-rating">★ ${place.rating} <span style="color:#aaa;">(${place.userRatingCount || 0})</span></div>`;
-  }
-  document.getElementById('poi-card-meta').innerHTML = metaHtml;
+  document.getElementById('poi-card-meta').innerHTML = category ? `<div class="poi-card-addr">${esc(category)}</div>` : '';
   document.getElementById('poi-card').classList.remove('hidden');
-  map.panTo(loc);
+  map.panTo([loc.lng, loc.lat]);
 }
 
 window.closePoiCard = function() {
@@ -288,58 +452,26 @@ window.addPoiToMap = function() {
 };
 
 // ── Route-mode map click: pick this point as origin or destination ──
-// Shows a small popup at screen position with two choices.
-async function handleRoutePointPick(latLng, placeId) {
-  let label;
-  if (placeId) {
-    // Resolve POI name via new Places API
-    try {
-      const { Place } = await google.maps.importLibrary('places');
-      const place = new Place({ id: placeId });
-      await place.fetchFields({ fields: ['displayName', 'location'] });
-      label = place.displayName || '選定地點';
-    } catch {
-      label = '選定地點';
-    }
-  } else {
-    // Blank spot (or an unclickable label like a station name): reverse-geocode to a nearby name.
-    label = await reverseGeocodeLabel(latLng);
-  }
-  routeClickTarget = { lat: latLng.lat(), lng: latLng.lng(), label };
-  showRoutePointMenu(latLng);
+// Shows a small popup with two choices.
+async function handleRoutePointPick(ll, name) {
+  // Blank spot: reverse-geocode to a nearby name (station, shop, street…)
+  const label = name || await reverseGeocodeLabel(ll);
+  routeClickTarget = { lat: ll.lat, lng: ll.lng, label };
+  showRoutePointMenu();
 }
 
-// Reverse geocode a coordinate to the most useful nearby name (prefers stations/POIs).
-// Results are cached by rounded coordinate to avoid repeat API calls for the same spot.
+// Results are cached by rounded coordinate to avoid repeat requests for the same spot.
 const geocodeCache = new Map();
-function reverseGeocodeLabel(latLng) {
-  const cacheKey = `${latLng.lat().toFixed(4)},${latLng.lng().toFixed(4)}`;
-  if (geocodeCache.has(cacheKey)) return Promise.resolve(geocodeCache.get(cacheKey));
-  return new Promise((resolve) => {
-    const done = (label) => { geocodeCache.set(cacheKey, label); resolve(label); };
-    try {
-      if (!window._geocoder) window._geocoder = new google.maps.Geocoder();
-      window._geocoder.geocode({ location: latLng, language: 'zh-TW' }, (results, status) => {
-        if (status === 'OK' && results && results.length) {
-          // Prefer a result that looks like a station or point of interest
-          const station = results.find(r => (r.types || []).some(t =>
-            ['transit_station', 'train_station', 'subway_station', 'point_of_interest', 'establishment'].includes(t)));
-          const best = station || results[0];
-          const name = best.address_components && best.address_components.length
-            ? best.address_components[0].long_name
-            : best.formatted_address;
-          done(name || `座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`);
-        } else {
-          done(`座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`);
-        }
-      });
-    } catch {
-      resolve(`座標 ${latLng.lat().toFixed(4)}, ${latLng.lng().toFixed(4)}`);
-    }
-  });
+async function reverseGeocodeLabel({ lat, lng }) {
+  const cacheKey = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+  if (geocodeCache.has(cacheKey)) return geocodeCache.get(cacheKey);
+  let name = '';
+  try { name = await reverseName(lat, lng); } catch (err) { console.warn('Reverse geocode error:', err); }
+  if (name) geocodeCache.set(cacheKey, name);
+  return name || `座標 ${lat.toFixed(4)}, ${lng.toFixed(4)}`;
 }
 
-function showRoutePointMenu(latLng) {
+function showRoutePointMenu() {
   const menu = document.getElementById('route-point-menu');
   if (!menu) return;
   document.getElementById('rpm-label').textContent = routeClickTarget.label;
@@ -363,104 +495,73 @@ window.closeRoutePointMenu = function() {
   routeClickTarget = null;
 };
 
-function markerScaleForZoom() {
-  const zoom = map.getZoom() || MARKER_BASE_ZOOM;
-  const diff = zoom - MARKER_BASE_ZOOM;
-  // Inverted: zooming OUT (negative diff) enlarges markers so they stay visible over all of Japan
-  const scale = MARKER_BASE_SCALE - diff * 0.55;
-  return Math.max(MARKER_MIN_SCALE, Math.min(MARKER_MAX_SCALE, scale));
-}
-
 // ══════════════════════════════════════
-// TOP SEARCH BAR (Google Maps style)
+// TOP SEARCH BAR
 // ══════════════════════════════════════
 function setupTopSearch() {
-  setupAutocompleteInput('top-search', 'top-search-results', async (prediction) => {
-    // Place mode: selecting a result fetches details then opens add-place flow
-    const place = prediction.toPlace();
-    await place.fetchFields({ fields: ['displayName', 'location', 'formattedAddress'] });
-    pendingLatLng = place.location;
+  // Place mode: selecting a result opens the add-place flow at that spot
+  setupSearchInput('top-search', 'top-search-results', (r, input) => {
+    pendingLatLng = { lat: r.lat, lng: r.lng };
     editingPlaceId = null;
-    map.panTo(pendingLatLng);
-    map.setZoom(16);
-    openAddModal(place.displayName || '');
-    document.getElementById('top-search').value = '';
-    document.getElementById('top-search-results').classList.add('hidden');
+    map.jumpTo({ center: [r.lng, r.lat], zoom: 15 });
+    openAddModal(r.name);
+    input.value = '';
   });
-
-  setupAutocompleteInput('top-r-origin', 'top-origin-results', null, true);
-  setupAutocompleteInput('top-r-dest', 'top-dest-results', null, true);
+  // Route mode: selecting a result fills the field and keeps its precise coordinates
+  setupSearchInput('top-r-origin', 'top-origin-results', (r, input) => {
+    input.value = r.name;
+    routeOriginCoord = { lat: r.lat, lng: r.lng };
+  });
+  setupSearchInput('top-r-dest', 'top-dest-results', (r, input) => {
+    input.value = r.name;
+    routeDestCoord = { lat: r.lat, lng: r.lng };
+  });
 }
 
-// Generic autocomplete wiring using the NEW Places API (AutocompleteSuggestion).
-// onPredictionSelected(prediction): called with a PlacePrediction (place search mode)
-// textOnly: if true, just fills the input text value (route origin/destination mode)
-function setupAutocompleteInput(inputId, resultsId, onPredictionSelected, textOnly) {
+// Search runs on Enter only (the free Nominatim server forbids search-as-you-type).
+function setupSearchInput(inputId, resultsId, onPick) {
   const input = document.getElementById(inputId);
   const results = document.getElementById(resultsId);
   if (!input || !results) return;
-  let t;
   input.addEventListener('input', () => {
-    clearTimeout(t);
     // If the user manually edits a route input, drop any map-picked coordinate for that field
     if (inputId === 'top-r-origin') { routeOriginCoord = null; clearRoutePick(); }
     if (inputId === 'top-r-dest') { routeDestCoord = null; clearRoutePick(); }
+    results.classList.add('hidden');
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;  // ignore IME confirm
+    e.preventDefault();
     const val = input.value.trim();
-    if (!val) { results.classList.add('hidden'); return; }
-    t = setTimeout(() => fetchSuggestions(val, results, input, onPredictionSelected, textOnly), 280);
+    if (val) runSearch(val, results, (r) => { results.classList.add('hidden'); onPick(r, input); });
   });
   document.addEventListener('click', (e) => {
     if (!input.contains(e.target) && !results.contains(e.target)) results.classList.add('hidden');
   });
 }
 
-async function fetchSuggestions(val, results, input, onPredictionSelected, textOnly) {
+async function runSearch(q, results, onPick) {
+  results.innerHTML = '<div class="search-result-empty">搜尋中…</div>';
+  results.classList.remove('hidden');
+  let list;
   try {
-    const { AutocompleteSuggestion, AutocompleteSessionToken } = await google.maps.importLibrary('places');
-    if (!window._autoToken) window._autoToken = new AutocompleteSessionToken();
-    // includedRegionCodes restricts to Japan; matches CJK/English/Japanese input alike.
-    const request = {
-      input: val,
-      language: 'zh-TW',
-      region: 'jp',
-      includedRegionCodes: ['jp'],
-      sessionToken: window._autoToken,
-    };
-    const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
-    if (!suggestions || suggestions.length === 0) {
-      results.innerHTML = '<div class="search-result-empty">找不到符合的地點</div>';
-      results.classList.remove('hidden');
-      return;
-    }
-    const preds = suggestions.map(s => s.placePrediction).filter(Boolean);
-    results.innerHTML = preds.slice(0, 6).map((p, i) => {
-      const main = p.mainText?.text || p.text?.text || '';
-      const secondary = p.secondaryText?.text || '';
-      return `<div class="search-result-item" data-idx="${i}">
-        <div class="sr-name">${esc(main)}</div>
-        <div class="sr-addr">${esc(secondary)}</div>
-      </div>`;
-    }).join('');
-    results.classList.remove('hidden');
-    results.querySelectorAll('.search-result-item').forEach((el, i) => {
-      el.onclick = async () => {
-        const pred = preds[i];
-        if (textOnly) {
-          const main = pred.mainText?.text || pred.text?.text || '';
-          const secondary = pred.secondaryText?.text || '';
-          input.value = secondary ? `${main} ${secondary}` : main;
-          results.classList.add('hidden');
-        } else if (onPredictionSelected) {
-          window._autoToken = null; // end session after selection
-          await onPredictionSelected(pred);
-        }
-      };
-    });
+    list = await searchPlaces(q, map.getBounds());
   } catch (err) {
-    console.warn('Autocomplete error:', err);
-    results.innerHTML = '<div class="search-result-empty">搜尋發生錯誤，請確認 Places API (New) 已啟用</div>';
-    results.classList.remove('hidden');
+    console.warn('Search error:', err);
+    results.innerHTML = '<div class="search-result-empty">搜尋失敗，請檢查網路後再試</div>';
+    return;
   }
+  if (!list.length) {
+    results.innerHTML = '<div class="search-result-empty">找不到符合的地點<br>小店常沒有資料，可在新增表單貼 Google Maps 網址帶入</div>';
+    return;
+  }
+  results.innerHTML = list.map((r, i) =>
+    `<div class="search-result-item" data-idx="${i}">
+      <div class="sr-name">${esc(r.name)}</div>
+      <div class="sr-addr">${esc(r.addr)}</div>
+    </div>`
+  ).join('');
+  results.querySelectorAll('.search-result-item').forEach((el, i) => { el.onclick = () => onPick(list[i]); });
 }
 
 // Arm an origin/dest field: the next sidebar place click fills it
@@ -495,10 +596,12 @@ window.topSearchRoute = function() {
   const originText = document.getElementById('top-r-origin').value.trim();
   const destText   = document.getElementById('top-r-dest').value.trim();
   if (!originText || !destText) { alert('請輸入起點和終點'); return; }
-  // Use precise coordinates if the point was picked from the map, else use the typed text
+  const name = `${originText} → ${destText}`;
+  // No free railway routing for Japan → trains are hand-drawn
+  if (topTransport === 'train') { startManualDraw(name, 'train', null); return; }
+  // Use precise coordinates if the point was picked from the map/list, else look up the typed text
   const origin = routeOriginCoord || originText;
   const dest   = routeDestCoord || destText;
-  const name = `${originText} → ${destText}`;
   searchAndSaveRoute(origin, dest, name, topTransport, 'top-route-go');
 };
 
@@ -553,90 +656,39 @@ function tripYear(t) { return (t.start || '').slice(0, 4) || '未定年份'; }
 // ══════════════════════════════════════
 // Markers & Polylines
 // ══════════════════════════════════════
-// Cluster renderer: brand-colored circle with the count
-let clusterer = null;
-function clusterRenderer() {
-  return {
-    render({ count, position }) {
-      const size = count < 10 ? 40 : count < 50 ? 46 : 54;
-      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 48 48">
-        <circle cx="24" cy="24" r="22" fill="#185FA5" fill-opacity="0.92" stroke="#fff" stroke-width="2.5"/>
-      </svg>`;
-      return new google.maps.Marker({
-        position,
-        icon: { url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg), scaledSize: new google.maps.Size(size, size), anchor: new google.maps.Point(size/2, size/2) },
-        label: { text: String(count), color: '#fff', fontSize: '13px', fontWeight: '600' },
-        zIndex: 2000 + count,
-      });
-    }
-  };
-}
-
-function syncPlaceMarkers() {
-  const ids = new Set(places.map(p => p.id));
-  Object.keys(markers).forEach(id => { if (!ids.has(id)) { markers[id].setMap(null); delete markers[id]; } });
-  const scale = markerScaleForZoom();
-  const visible = [];
+// Rebuild the place/route overlay data from current state (filters, selection, hidden trips).
+let placeSyncSeq = 0;
+async function syncPlaceMarkers() {
+  if (!mapReady) return;
+  const seq = ++placeSyncSeq;
+  const features = [];
   places.forEach(p => {
-    const sel = selectedPlaceId === p.id;
-    const iconKey = placeIcon(p);
-    const color = placeColor(p);
-    const icon = buildMarkerIcon(iconKey, color, sel ? scale * 1.35 : scale);
+    if (typeof p.lat !== 'number' || typeof p.lng !== 'number') return;
     let show = !(p.tripId && hiddenTripIds.has(p.tripId));
     if (restaurantMode) show = isRestaurant(p) && restaurantMatchesFilter(p);
-    if (!markers[p.id]) {
-      // Markers are created WITHOUT a map — the clusterer manages attachment
-      const marker = new google.maps.Marker({ position: { lat: p.lat, lng: p.lng }, title: p.name, icon, zIndex: sel ? 999 : 1 });
-      marker.addListener('click', () => selectPlace(p.id));
-      markers[p.id] = marker;
-    } else {
-      markers[p.id].setIcon(icon);
-      markers[p.id].setZIndex(sel ? 999 : 1);
-    }
-    if (show) visible.push(markers[p.id]);
-    else markers[p.id].setMap(null);
+    if (!show) return;
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [p.lng, p.lat] },
+      properties: { id: p.id, name: p.name || '', icon: `${placeIcon(p)}|${placeColor(p)}`, sel: selectedPlaceId === p.id },
+    });
   });
-
-  // Clustering only when zoomed OUT beyond the threshold (whole-Japan view).
-  // Zoomed in past it (region level, e.g. all of Shikoku), every marker shows.
-  const CLUSTER_MAX_ZOOM = 8;
-  const useCluster = window.markerClusterer && map && map.getZoom() < CLUSTER_MAX_ZOOM;
-  if (useCluster) {
-    if (!clusterer) clusterer = new markerClusterer.MarkerClusterer({ map, markers: [], renderer: clusterRenderer() });
-    clusterer.clearMarkers(true);
-    clusterer.addMarkers(visible);
-  } else {
-    if (clusterer) clusterer.clearMarkers(true);
-    visible.forEach(m => m.setMap(map));
-  }
+  await ensureMarkerImages([...new Set(features.map(f => f.properties.icon))]);
+  if (seq !== placeSyncSeq || !mapReady) return;  // a newer sync (or a style swap) took over
+  setOverlay('places', { type: 'FeatureCollection', features });
 }
 
 function syncRoutePolylines() {
-  const ids = new Set(routes.map(r => r.id));
-  Object.keys(polylines).forEach(id => { if (!ids.has(id)) { polylines[id].setMap(null); delete polylines[id]; } });
-  routes.forEach(r => {
-    const t = TRANSPORT[r.transport] || TRANSPORT.drive;
-    const color = routeColor(r);
-    const sel = selectedRouteId === r.id;
-    const targetMap = (restaurantMode || routesHidden || (r.tripId && hiddenTripIds.has(r.tripId))) ? null : map;
-    if (polylines[r.id]) {
-      polylines[r.id].setMap(targetMap);
-      polylines[r.id].setOptions({ strokeColor: color, strokeWeight: sel ? 5 : 3, strokeOpacity: sel ? 1 : 0.75 });
-      return;
-    }
-    const path = (r.points || []).map(p => ({ lat: p.lat, lng: p.lng }));
-    const poly = new google.maps.Polyline({
-      path, map: targetMap,
-      strokeColor: color, strokeWeight: 3, strokeOpacity: 0.75,
-      icons: [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 }, offset: '0', repeat: `${t.dash[0] + t.dash[1]}px` }]
-    });
-    poly.addListener('click', () => selectRoute(r.id));
-    // Hover tooltip: show route name + transport type
-    poly.addListener('mouseover', (e) => showRouteTooltip(e.latLng, r));
-    poly.addListener('mousemove', (e) => moveRouteTooltip(e.latLng));
-    poly.addListener('mouseout', hideRouteTooltip);
-    polylines[r.id] = poly;
-  });
+  if (!mapReady) return;
+  const features = (restaurantMode || routesHidden) ? [] : routes
+    .filter(r => !(r.tripId && hiddenTripIds.has(r.tripId)) && Array.isArray(r.points) && r.points.length >= 2)
+    .map(r => lineFeature(r.points, {
+      id: r.id,
+      color: routeColor(r),
+      transport: TRANSPORT[r.transport] ? r.transport : 'drive',
+      sel: selectedRouteId === r.id,
+    }));
+  setOverlay('routes', { type: 'FeatureCollection', features });
 }
 
 window.toggleHideRoutes = function() {
@@ -645,25 +697,30 @@ window.toggleHideRoutes = function() {
   syncRoutePolylines();
 };
 
-// Route hover tooltip (an InfoWindow that follows the cursor)
-let routeTooltip = null;
-function showRouteTooltip(latLng, r) {
-  const t = TRANSPORT[r.transport] || TRANSPORT.drive;
-  if (!routeTooltip) routeTooltip = new google.maps.InfoWindow({ disableAutoPan: true });
-  const fareStr = r.fare ? `｜¥${esc(String(r.fare))}` : '';
-  routeTooltip.setContent(
-    `<div style="font-size:12px;padding:2px 4px;"><b>${esc(r.name)}</b><br>交通方式：${t.label}${r.cat ? '｜' + esc(r.cat) : ''}${fareStr}</div>`
-  );
-  routeTooltip.setPosition(latLng);
-  routeTooltip.open(map);
+// Route hover tooltip (a popup that follows the cursor)
+let routeTooltip = null, routeTooltipId = null;
+function showRouteTooltip(lngLat, r) {
+  if (!routeTooltip) {
+    routeTooltip = new maplibregl.Popup({ closeButton: false, closeOnClick: false, className: 'route-tooltip', offset: 12 });
+  }
+  if (routeTooltipId !== r.id) {
+    const t = TRANSPORT[r.transport] || TRANSPORT.drive;
+    const fareStr = r.fare ? `｜¥${esc(String(r.fare))}` : '';
+    routeTooltip.setHTML(`<b>${esc(r.name)}</b><br>交通方式：${t.label}${r.cat ? '｜' + esc(r.cat) : ''}${fareStr}`);
+    routeTooltipId = r.id;
+  }
+  routeTooltip.setLngLat(lngLat);
+  if (!routeTooltip.isOpen()) routeTooltip.addTo(map);
 }
-function moveRouteTooltip(latLng) { if (routeTooltip) routeTooltip.setPosition(latLng); }
-function hideRouteTooltip() { if (routeTooltip) routeTooltip.close(); }
+function hideRouteTooltip() {
+  if (routeTooltip) routeTooltip.remove();
+  routeTooltipId = null;
+}
 
 function clearMap() {
-  Object.values(markers).forEach(m => m.setMap(null));
-  Object.values(polylines).forEach(p => p.setMap(null));
-  markers = {}; polylines = {}; places = []; routes = []; trips = [];
+  places = []; routes = []; trips = [];
+  syncPlaceMarkers();
+  syncRoutePolylines();
 }
 
 // ══════════════════════════════════════
@@ -702,9 +759,8 @@ function selectPlace(id) {
   syncPlaceMarkers();
   updateListSelection();
   // Only move the map if the place is outside the current view (avoids jumpy panning)
-  const pos = { lat: p.lat, lng: p.lng };
-  const bounds = map.getBounds();
-  if (!bounds || !bounds.contains(pos)) map.panTo(pos);
+  const pos = [p.lng, p.lat];
+  if (map && !map.getBounds().contains(pos)) map.panTo(pos);
 }
 
 // ── Info panel photo carousel ──
@@ -830,7 +886,6 @@ window.editSelectedPlace = function() {
 window.deleteSelectedPlace = async function() {
   if (!selectedPlaceId || !confirm('確定要刪除這個地點嗎？')) return;
   const p = places.find(x => x.id === selectedPlaceId);
-  if (markers[selectedPlaceId]) { markers[selectedPlaceId].setMap(null); delete markers[selectedPlaceId]; }
   await deletePlace(selectedPlaceId);
   selectedPlaceId = null;
   document.getElementById('info-panel').classList.add('hidden');
@@ -883,12 +938,10 @@ window.confirmDelete = async function() {
     if (type === 'place') {
       const p = places.find(x => x.id === id);
       if (p) snap.places.push({ ...p });
-      if (markers[id]) { markers[id].setMap(null); delete markers[id]; }
       await deletePlace(id);
     } else if (type === 'route') {
       const r = routes.find(x => x.id === id);
       if (r) snap.routes.push({ ...r });
-      if (polylines[id]) { polylines[id].setMap(null); delete polylines[id]; }
       await deleteRoute(id);
     }
   }
@@ -926,7 +979,7 @@ window.setMode = function(m) {
   else if (m === 'delete') { ind.textContent = '點擊地點或路線來選取'; ind.classList.remove('hidden'); }
   else if (m === 'batch') { ind.textContent = '點選地點，再選行程套用'; ind.classList.remove('hidden'); }
   else { ind.classList.add('hidden'); }
-  if (map) map.setOptions({ draggableCursor: (m === 'pin') ? 'crosshair' : '' });
+  updateMapCursor(false);
   renderList();
 };
 
@@ -1657,7 +1710,7 @@ window.parseGmapsUrl = function() {
     try { document.getElementById('f-name').value = decodeURIComponent(nameMatch[1].replace(/\+/g, ' ')); } catch (_) {}
   }
   show(`已帶入座標：${lat.toFixed(5)}, ${lng.toFixed(5)}`, true);
-  if (map) map.panTo({ lat, lng });
+  if (map) map.panTo([lng, lat]);
 };
 
 // When category changes, update icon/color to that category's defaults
@@ -1720,7 +1773,35 @@ window.closeModal = function() {
 // ══════════════════════════════════════
 // Settings Modal
 // ══════════════════════════════════════
-window.openSettings = function() { document.getElementById('settings-overlay').classList.remove('hidden'); };
+window.openSettings = function() {
+  renderBasemapToggle();
+  document.getElementById('settings-overlay').classList.remove('hidden');
+};
+
+// ── Basemap: colorful / pale (remembered on this device only) ──
+function renderBasemapToggle() {
+  Object.keys(BASEMAPS).forEach(k => {
+    const b = document.getElementById('bm-' + k);
+    if (b) b.classList.toggle('active', k === basemap);
+  });
+}
+window.setBasemap = async function(key) {
+  if (!BASEMAPS[key] || key === basemap) return;
+  basemap = key;
+  try { localStorage.setItem('jpmap.basemap', key); } catch {}
+  renderBasemapToggle();
+  if (!map) return;
+  try {
+    const style = await loadBaseStyle(key);
+    if (key !== basemap) return;  // user switched again while loading
+    mapReady = false;  // onStyleLoad re-adds our layers on the new style
+    hideRouteTooltip();
+    map.setStyle(structuredClone(style), { diff: false });
+  } catch (err) {
+    console.warn('Basemap load error:', err);
+    alert('底圖載入失敗，請檢查網路後再試');
+  }
+};
 window.closeSettings = function() { document.getElementById('settings-overlay').classList.add('hidden'); };
 
 // ── Restaurant mode: map & sidebar show only food places ──
@@ -1856,64 +1937,55 @@ function renderStatsContent() {
 }
 
 // ══════════════════════════════════════
-// Auto Route (Directions API) — used by top search bar
+// Auto Route (OSRM) — used by top search bar
 // ══════════════════════════════════════
-function searchAndSaveRoute(origin, dest, name, transport, triggerBtnId) {
-  const travelMode = {
-    drive: google.maps.TravelMode.DRIVING,
-    walk:  google.maps.TravelMode.WALKING,
-    train: google.maps.TravelMode.TRANSIT,
-  }[transport];
+// origin/dest: {lat,lng} when picked on the map/list, or text → looked up (first search hit)
+async function resolveRoutePoint(p) {
+  if (typeof p !== 'string') return p;
+  const [hit] = await searchPlaces(p, map.getBounds());
+  if (!hit) throw Object.assign(new Error('place not found'), { notFound: p });
+  return { lat: hit.lat, lng: hit.lng };
+}
 
-  const request = { origin, destination: dest, travelMode, region: 'jp' };
-  if (transport === 'train') request.transitOptions = { departureTime: new Date() };
-  // For driving, ask Google for 2-3 alternative routes so the user can choose
-  if (transport === 'drive') request.provideRouteAlternatives = true;
+function routeErrorReason(err) {
+  if (err.notFound) return `找不到「${err.notFound}」的位置。可在地圖或左側清單點選起終點，或輸入後按 Enter 從結果中選。`;
+  if (err.code === 'NoRoute') return '這兩點之間找不到可通行的道路。';
+  if (err.code === 'NoSegment') return '起點或終點離道路太遠。';
+  if (err.code === 'NETWORK') return '連不上路線伺服器（免費公共服務，偶爾會故障），請稍後再試。';
+  return `路線伺服器回應：${err.code || err.message}`;
+}
 
+async function searchAndSaveRoute(origin, dest, name, transport, triggerBtnId) {
   const btn = triggerBtnId ? document.getElementById(triggerBtnId) : null;
   const origText = btn ? btn.textContent : '';
   if (btn) { btn.textContent = '搜尋中...'; btn.disabled = true; }
 
-  directionsService.route(request, async (result, status) => {
-    if (btn) { btn.textContent = origText; btn.disabled = false; }
+  let found, error;
+  try {
+    const from = await resolveRoutePoint(origin);
+    const to = await resolveRoutePoint(dest);
+    found = await fetchRoutes(transport, from, to);
+  } catch (err) {
+    error = err;
+  }
+  if (btn) { btn.textContent = origText; btn.disabled = false; }
 
-    if (status !== google.maps.DirectionsStatus.OK) {
-      if (transport === 'train') {
-        // Translate Google's status into a plain-language reason
-        let reason;
-        if (status === 'ZERO_RESULTS') {
-          reason = 'Google 沒有這段電車路線資料（常見於跨區、偏遠或起訖點離車站太遠）。';
-        } else if (status === 'NOT_FOUND') {
-          reason = '起點或終點無法定位（站名可能不夠明確）。建議用完整車站名，例如「鎌倉駅」。';
-        } else if (status === 'OVER_QUERY_LIMIT') {
-          reason = '查詢次數過多，請稍候再試。';
-        } else if (status === 'REQUEST_DENIED') {
-          reason = 'Directions API 權限被拒，請確認已啟用 Directions API。';
-        } else {
-          reason = `Google 回傳狀態：${status}`;
-        }
-        // Train fallback → let the user hand-draw the route on the map
-        const draw = confirm(`找不到電車路線。\n\n原因：${reason}\n\n要改用「手繪路線」嗎？\n（在地圖上沿著鐵路逐點點擊，雙擊完成）`);
-        if (draw) {
-          startManualDraw(name, 'train', pendingRouteColorForDraw());
-        }
-      } else {
-        alert(`找不到路線（狀態：${status}）。\n\n建議：輸入完整站名或地標名稱。`);
-      }
-      return;
+  if (error) {
+    console.warn('Route error:', error);
+    // Fallback → let the user hand-draw the route on the map
+    if (confirm(`找不到路線。\n\n原因：${routeErrorReason(error)}\n\n要改用「手繪路線」嗎？\n（在地圖上逐點點擊，雙擊完成）`)) {
+      startManualDraw(name, transport, null);
     }
+    return;
+  }
 
-    // Driving with multiple alternatives → let user pick
-    if (transport === 'drive' && result.routes.length > 1) {
-      openRouteAlternativesPicker(result, name, transport);
-      return;
-    }
-    await saveRouteFromResult(result, name, transport);
-  });
+  // Driving with multiple alternatives → let user pick
+  if (transport === 'drive' && found.length > 1) {
+    openRouteAlternativesPicker(found, name, transport);
+    return;
+  }
+  saveRouteFromResult(found, name, transport);
 }
-
-// Default color for a hand-drawn route (uses transport default)
-function pendingRouteColorForDraw() { return null; }
 
 function clearTopRouteInputs() {
   document.getElementById('top-r-origin').value = '';
@@ -1921,18 +1993,10 @@ function clearTopRouteInputs() {
   routeOriginCoord = null; routeDestCoord = null;
 }
 
-async function saveRouteFromResult(result, name, transport, routeIndex) {
+function saveRouteFromResult(found, name, transport, routeIndex) {
   const t = TRANSPORT[transport];
-  const idx = routeIndex || 0;
-  const leg = result.routes[idx].legs[0];
-  const points = [];
-  leg.steps.forEach(step => {
-    if (step.steps) {
-      step.steps.forEach(sub => sub.path.forEach(ll => points.push({ lat: ll.lat(), lng: ll.lng() })));
-    } else {
-      step.path.forEach(ll => points.push({ lat: ll.lat(), lng: ll.lng() }));
-    }
-  });
+  const rt = found[routeIndex || 0];
+  const points = rt.points;
 
   const maxPts = 200;
   const interval = Math.max(1, Math.floor(points.length / maxPts));
@@ -1942,15 +2006,10 @@ async function saveRouteFromResult(result, name, transport, routeIndex) {
   }
 
   // Show the computed route on the map as a preview while the user fills in details
-  directionsRenderer.setMap(map);
-  directionsRenderer.setDirections(result);
-  directionsRenderer.setRouteIndex(idx);
-  directionsRenderer.setOptions({ polylineOptions: { strokeColor: t.color, strokeWeight: 4, strokeOpacity: 0.6 } });
+  setOverlay('preview', { type: 'FeatureCollection', features: [lineFeature(points, { color: t.color })] });
 
-  // Stash the route data and open the details form to collect category/date/note/trip
-  // Capture the precise distance (meters) from Google Directions for new routes.
-  const distanceMeters = leg.distance ? leg.distance.value : null;
-  pendingRoute = { name, transport, points: sampled, distanceMeters };
+  // Stash the route data (with the precise distance in meters) and open the details form
+  pendingRoute = { name, transport, points: sampled, distanceMeters: Math.round(rt.distance) };
   openRouteDetailsModal(name);
 }
 
@@ -1979,51 +2038,32 @@ function fmtKm(d) {
 }
 
 // ── Driving alternatives: draw all on map, click a line to choose ──
-let altPickerData = null;      // { result, name, transport, selectedIndex }
-let altPolylines = [];         // preview polylines for each alternative
-function openRouteAlternativesPicker(result, name, transport) {
-  altPickerData = { result, name, transport, selectedIndex: 0 };
-  // Hide the built-in renderer; we draw our own clickable previews
-  directionsRenderer.setMap(null);
+let altPickerData = null;      // { found, name, transport, selectedIndex }
+function openRouteAlternativesPicker(found, name, transport) {
+  altPickerData = { found, name, transport, selectedIndex: 0 };
+  setOverlay('preview', EMPTY_FC);
   drawAltPreviews();
   // Populate the floating list
   const list = document.getElementById('route-alt-list');
-  list.innerHTML = result.routes.map((rt, i) => {
-    const leg = rt.legs[0];
-    const summary = rt.summary || `路線 ${i + 1}`;
-    const dist = leg.distance ? leg.distance.text : '';
-    const dur = leg.duration ? leg.duration.text : '';
-    return `<div class="route-alt-item" data-idx="${i}" onclick="selectAltRoute(${i})">
-      <div class="route-alt-name">路線 ${i + 1}${summary ? '：' + esc(summary) : ''}</div>
-      <div class="route-alt-meta">${dist}${dist && dur ? ' · ' : ''}${dur}</div>
-    </div>`;
-  }).join('');
+  list.innerHTML = found.map((rt, i) =>
+    `<div class="route-alt-item" data-idx="${i}" onclick="selectAltRoute(${i})">
+      <div class="route-alt-name">路線 ${i + 1}</div>
+      <div class="route-alt-meta">${fmtDistance(rt.distance)} · ${fmtDuration(rt.duration)}</div>
+    </div>`
+  ).join('');
   updateAltListSelection();
   document.getElementById('route-alt-modal').classList.remove('hidden');
 }
 
 function drawAltPreviews() {
-  clearAltPreviews();
-  const { result, selectedIndex } = altPickerData;
-  result.routes.forEach((rt, i) => {
-    const path = rt.overview_path || [];
-    const selected = i === selectedIndex;
-    const poly = new google.maps.Polyline({
-      path, map,
-      strokeColor: selected ? '#185FA5' : '#9AA5B1',
-      strokeWeight: selected ? 6 : 4,
-      strokeOpacity: selected ? 0.95 : 0.5,
-      zIndex: selected ? 10 : 1,
-    });
-    poly.addListener('click', () => selectAltRoute(i));
-    altPolylines.push(poly);
+  const { found, selectedIndex } = altPickerData;
+  setOverlay('alts', {
+    type: 'FeatureCollection',
+    features: found.map((rt, i) => lineFeature(rt.points, { idx: i, sel: i === selectedIndex })),
   });
 }
 
-function clearAltPreviews() {
-  altPolylines.forEach(p => p.setMap(null));
-  altPolylines = [];
-}
+function clearAltPreviews() { setOverlay('alts', EMPTY_FC); }
 
 window.selectAltRoute = function(i) {
   if (!altPickerData) return;
@@ -2038,65 +2078,76 @@ function updateAltListSelection() {
   });
 }
 
-window.confirmRouteAlternative = async function() {
+window.confirmRouteAlternative = function() {
   if (!altPickerData) return;
-  const { result, name, transport, selectedIndex } = altPickerData;
+  const { found, name, transport, selectedIndex } = altPickerData;
   clearAltPreviews();
   document.getElementById('route-alt-modal').classList.add('hidden');
   altPickerData = null;
-  await saveRouteFromResult(result, name, transport, selectedIndex);
+  saveRouteFromResult(found, name, transport, selectedIndex);
 };
 
 window.closeRouteAltModal = function() {
   clearAltPreviews();
   document.getElementById('route-alt-modal').classList.add('hidden');
-  directionsRenderer.setMap(null);
+  setOverlay('preview', EMPTY_FC);
   altPickerData = null;
 };
 
-// ── Manual route drawing (used as train fallback) ──
-let manualDraw = null;  // { name, transport, color, path:[], polyline }
+// ── Manual route drawing (trains, or when no route is found) ──
+let manualDraw = null;  // { name, transport, color, path:[] }
 function startManualDraw(name, transport, color) {
   const t = TRANSPORT[transport] || TRANSPORT.train;
-  manualDraw = { name, transport, color, path: [], polyline: null };
-  manualDraw.polyline = new google.maps.Polyline({
-    path: [], map, strokeColor: color || t.color, strokeWeight: 4, strokeOpacity: 0.8,
-  });
+  manualDraw = { name, transport, color: color || t.color, path: [] };
+  renderManualDraw();
   setMode('view');
+  const hint = transport === 'train' ? '沿鐵路逐點點擊' : '沿路線逐點點擊';
   const ind = document.getElementById('mode-indicator');
-  ind.textContent = '手繪路線：沿鐵路逐點點擊，雙擊完成';
+  ind.textContent = `手繪路線：${hint}，雙擊完成`;
   ind.classList.remove('hidden');
   // Show a finish button
+  document.querySelector('#manual-draw-bar .mdb-hint').textContent = `${hint}，雙擊或按完成結束`;
   document.getElementById('manual-draw-bar').classList.remove('hidden');
 }
 
-function addManualDrawPoint(latLng) {
+function addManualDrawPoint(ll) {
   if (!manualDraw) return;
-  manualDraw.path.push({ lat: latLng.lat(), lng: latLng.lng() });
-  manualDraw.polyline.setPath(manualDraw.path.map(p => ({ lat: p.lat, lng: p.lng })));
+  // A double-click also fires two clicks on the same spot: skip duplicate points
+  const last = manualDraw.path[manualDraw.path.length - 1];
+  if (last && last.lat === ll.lat && last.lng === ll.lng) return;
+  manualDraw.path.push({ lat: ll.lat, lng: ll.lng });
+  renderManualDraw();
 }
 
-window.finishManualDraw = async function() {
+function renderManualDraw() {
+  if (!manualDraw) { setOverlay('draw', EMPTY_FC); return; }
+  const { path, color } = manualDraw;
+  const features = path.map(p => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lng, p.lat] }, properties: { color } }));
+  if (path.length >= 2) features.push(lineFeature(path, { color }));
+  setOverlay('draw', { type: 'FeatureCollection', features });
+}
+
+window.finishManualDraw = function() {
   if (!manualDraw) return;
   document.getElementById('manual-draw-bar').classList.add('hidden');
   document.getElementById('mode-indicator').classList.add('hidden');
-  if (manualDraw.path.length < 2) {
+  const { name, transport, path } = manualDraw;
+  manualDraw = null;
+  renderManualDraw();
+  updateMapCursor(false);
+  if (path.length < 2) {
     alert('至少需要點兩個點才能畫出路線。');
-    if (manualDraw.polyline) manualDraw.polyline.setMap(null);
-    manualDraw = null;
     return;
   }
   // Stash and open the details form (reuse the same modal)
-  if (manualDraw.polyline) manualDraw.polyline.setMap(null);
-  pendingRoute = { name: manualDraw.name, transport: manualDraw.transport, points: manualDraw.path };
-  const nm = manualDraw.name;
-  manualDraw = null;
-  openRouteDetailsModal(nm);
+  pendingRoute = { name, transport, points: path };
+  openRouteDetailsModal(name);
 };
 
 window.cancelManualDraw = function() {
-  if (manualDraw && manualDraw.polyline) manualDraw.polyline.setMap(null);
   manualDraw = null;
+  renderManualDraw();
+  updateMapCursor(false);
   document.getElementById('manual-draw-bar').classList.add('hidden');
   document.getElementById('mode-indicator').classList.add('hidden');
 };
@@ -2163,7 +2214,7 @@ window.pickRouteColor = function(c) { pendingRouteColor = c; renderRouteColorPic
 window.closeRouteDetailsModal = function() {
   document.getElementById('route-details-modal').classList.add('hidden');
   document.querySelector('#route-details-modal h3').textContent = '路線資料';
-  directionsRenderer.setMap(null);
+  setOverlay('preview', EMPTY_FC);
   pendingRoute = null;
   editingRouteId = null;
 };
@@ -2190,7 +2241,7 @@ window.saveRouteDetails = async function() {
   } else {
     await addRoute(data);
   }
-  directionsRenderer.setMap(null);
+  setOverlay('preview', EMPTY_FC);
   pendingRoute = null;
   document.getElementById('route-details-modal').classList.add('hidden');
   document.querySelector('#route-details-modal h3').textContent = '路線資料';
@@ -2299,9 +2350,9 @@ function parseGoogleTimeline(data) {
   return out;
 }
 
-window.zoomIn = function() { if (map) map.setZoom(map.getZoom() + 1); };
-window.zoomOut = function() { if (map) map.setZoom(map.getZoom() - 1); };
-window.recenterMap = function() { if (map) { map.panTo({ lat: 36.2, lng: 138.5 }); map.setZoom(5); } };
+window.zoomIn = function() { if (map) map.zoomIn(); };
+window.zoomOut = function() { if (map) map.zoomOut(); };
+window.recenterMap = function() { if (map) map.easeTo(JAPAN_VIEW); };
 
 // ── Expose globals ──
 // ── Keyboard shortcuts ──

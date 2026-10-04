@@ -1,6 +1,6 @@
 # 日本旅遊地圖
 
-個人 Japan 旅遊記錄工具，使用 Google Maps + Firebase 建立。
+個人 Japan 旅遊記錄工具，使用 MapLibre + OpenFreeMap（免費地圖，免金鑰）+ Firebase 建立。
 
 ## 功能
 - 標記去過的地點（美食、神社、自然、文化、購物）
@@ -38,10 +38,10 @@ Firebase Console → Firestore Database → 規則 → 貼上 `firestore.rules` 
 #### 設定 Google 登入（可選）
 Firebase Console → Authentication → Sign-in method → Google → 啟用
 
-### 4. Google Maps API 限制
+### 4. API 金鑰限制（Firebase 用的那把，勿刪除）
 Google Cloud Console → 憑證 → 你的 API Key → HTTP 參照網址 → 新增：
 - `localhost:*`（本地測試）
 - `你的帳號.github.io/*`（正式網址）
 
 ## 本地測試
-直接用瀏覽器開啟 `index.html` 即可（需要網路連線）。
+在專案資料夾執行 `python -m http.server 8000`，再開 `http://localhost:8000/`（ES module 不能直接用 file:// 開；需要網路連線）。
