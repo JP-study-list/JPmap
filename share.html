@@ -242,6 +242,7 @@ import { getFirestore, doc, getDoc } from "https://www.gstatic.com/firebasejs/10
 import { loadBaseStyle, JP_FONTS } from "./js/map.js";
 import { isFsPhoto, photoUrl } from "./js/photos.js";
 import { sheet, photoViewer } from "./js/gestures.js";
+import { hasLegs, legFeatures, RAIL_ATTRIBUTION } from "./js/rail.js";
 
 // ── Firebase (same project as main JPmap) ──
 const firebaseConfig = {
@@ -492,7 +493,7 @@ async function renderMap() {
     center: [139.76, 35.68],
     zoom: 10,
     localIdeographFontFamily: JP_FONTS,
-    attributionControl: { compact: true },
+    attributionControl: { compact: true, customAttribution: RAIL_ATTRIBUTION },
     dragRotate: false,
     pitchWithRotate: false,
     touchPitch: false,
@@ -503,13 +504,14 @@ async function renderMap() {
   const bounds = new maplibregl.LngLatBounds();
   let hasPoint = false;
 
-  // Routes (lines)
+  // Routes (lines). Train routes with legs: each line in its color over a white casing, dots at transfers
   const routeFeatures = [];
   routes.forEach(r => {
     const pts = (r.points || []).filter(pt => typeof pt.lat === 'number' && typeof pt.lng === 'number');
     if (pts.length < 2) return;
     const t = TRANSPORT[r.transport] || TRANSPORT.drive;
-    routeFeatures.push({
+    if (pts.length === r.points.length && hasLegs(r)) routeFeatures.push(...legFeatures(r, { rail: true }));
+    else routeFeatures.push({
       type: 'Feature',
       geometry: { type: 'LineString', coordinates: pts.map(pt => [pt.lng, pt.lat]) },
       properties: { color: t.color },
@@ -517,11 +519,23 @@ async function renderMap() {
     pts.forEach(pt => { bounds.extend([pt.lng, pt.lat]); hasPoint = true; });
   });
   map.on('load', () => {
+    const isLine = ['==', ['geometry-type'], 'LineString'];
+    const round = { 'line-join': 'round', 'line-cap': 'round' };
     map.addSource('routes', { type: 'geojson', data: { type: 'FeatureCollection', features: routeFeatures } });
     map.addLayer({
-      id: 'routes', type: 'line', source: 'routes',
-      layout: { 'line-join': 'round', 'line-cap': 'round' },
-      paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-opacity': 0.8 },
+      id: 'routes-casing', type: 'line', source: 'routes', layout: round, filter: ['all', isLine, ['has', 'rail']],
+      paint: { 'line-color': '#fff', 'line-width': 7 },
+    });
+    map.addLayer({
+      id: 'routes', type: 'line', source: 'routes', layout: round, filter: isLine,
+      paint: { 'line-color': ['get', 'color'], 'line-width': ['case', ['has', 'rail'], 4.5, 3], 'line-opacity': ['case', ['has', 'rail'], 0.95, 0.8] },
+    });
+    map.addLayer({
+      id: 'routes-stops', type: 'circle', source: 'routes', minzoom: 8, filter: ['==', ['geometry-type'], 'Point'],
+      paint: {
+        'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.5, 13, 4.5],
+        'circle-color': '#fff', 'circle-stroke-width': 1.5, 'circle-stroke-color': '#3a3a3c',
+      },
     });
   });
 

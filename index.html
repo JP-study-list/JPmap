@@ -249,6 +249,11 @@
           <input type="text" id="top-r-origin" placeholder="起點（點左側地標／地圖，或輸入後按 Enter）" autocomplete="off" enterkeyhint="search" onfocus="armRoutePick('origin')">
           <div id="top-origin-results" class="hidden search-results-dropdown"></div>
         </div>
+        <div id="top-via-row" class="hidden" style="position:relative;margin-top:6px;">
+          <span class="route-dot via-dot"></span>
+          <input type="text" id="top-r-via" placeholder="經過的車站（可不填）" autocomplete="off" enterkeyhint="search">
+          <div id="top-via-results" class="hidden search-results-dropdown"></div>
+        </div>
         <div style="position:relative;margin-top:6px;">
           <span class="route-dot dest-dot"></span>
           <input type="text" id="top-r-dest" placeholder="終點（點左側地標／地圖，或輸入後按 Enter）" autocomplete="off" enterkeyhint="search" onfocus="armRoutePick('dest')">
@@ -258,6 +263,7 @@
           <button class="rt-mini active" id="rt-drive" onclick="selectTopTransport('drive')" title="開車/公車"><svg class="icon"><use href="#icon-car"/></svg></button>
           <button class="rt-mini" id="rt-walk" onclick="selectTopTransport('walk')" title="走路"><svg class="icon"><use href="#icon-walk"/></svg></button>
           <button class="rt-mini" id="rt-train" onclick="selectTopTransport('train')" title="電車"><svg class="icon"><use href="#icon-train"/></svg></button>
+          <button class="rt-via hidden" id="rt-via-toggle" onclick="toggleViaStation()" title="指定經過的車站">＋經過</button>
           <button id="top-route-go" onclick="topSearchRoute()">規劃</button>
         </div>
       </div>
@@ -398,7 +404,7 @@
 <!-- Route Alternatives Picker (driving) — floating, non-blocking so the map stays clickable -->
 <div id="route-alt-modal" class="hidden">
   <h3>選擇路線</h3>
-  <p style="font-size:12px;color:#999;margin-bottom:10px;">點地圖上的線段或下方清單選路線：</p>
+  <p class="route-alt-hint" style="font-size:12px;color:#999;margin-bottom:10px;">點地圖上的線段或下方清單選路線：</p>
   <div id="route-alt-list"></div>
   <div style="display:flex;gap:8px;margin-top:12px;">
     <button class="btn-secondary" style="flex:1;" onclick="closeRouteAltModal()">取消</button>
@@ -429,7 +435,8 @@
       </select>
     </div>
     <div class="form-row hidden" id="rd-fare-row"><label>車資（日圓）</label><input type="number" id="rd-fare" placeholder="例：320" min="0"></div>
-    <div class="form-row">
+    <div class="form-row hidden" id="rd-legs-row"><label>搭乘路線</label><div id="rd-legs"></div></div>
+    <div class="form-row" id="rd-color-row">
       <label>路線顏色</label>
       <div id="rd-color-picker"></div>
     </div>

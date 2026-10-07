@@ -63,7 +63,7 @@ input, select, textarea { font-family: inherit; }
 .mdb-cancel { padding: 7px 14px; border: none; border-radius: 10px; background: var(--fill); font-size: 14px; color: var(--label); }
 .mdb-finish { padding: 7px 16px; border: none; border-radius: 10px; background: var(--accent); color: #fff; font-size: 14px; font-weight: 600; }
 /* Route alternatives floating panel */
-#route-alt-modal { position: absolute; top: 16px; right: 16px; z-index: 30; border-radius: 18px; padding: 16px; width: 290px; transform-origin: top right; }
+#route-alt-modal { position: absolute; top: 16px; right: 16px; z-index: 30; border-radius: 18px; padding: 16px; width: 290px; max-height: calc(100% - 32px); overflow-y: auto; transform-origin: top right; }
 #route-alt-modal h3 { font-size: 17px; letter-spacing: -0.01em; margin-bottom: 4px; }
 .route-alt-item { padding: 12px 14px; border: none; border-radius: 12px; margin-bottom: 8px; cursor: pointer; background: var(--fill-2); transition: background 0.15s, box-shadow 0.15s; }
 .route-alt-item.selected { background: var(--accent-tint); box-shadow: inset 0 0 0 1.5px var(--accent); }
@@ -152,6 +152,26 @@ input, select, textarea { font-family: inherit; }
 .rt-mini .icon { width: 16px; height: 16px; }
 .rt-mini.active { background: var(--accent-tint); color: var(--accent); }
 #top-route-go { flex: 1; padding: 7px; font-size: 14px; background: var(--accent); color: #fff; border: none; border-radius: 8px; font-weight: 600; }
+.via-dot { background: #8E8E93; }
+.rt-via { height: 32px; padding: 0 9px; border: none; border-radius: 8px; background: var(--fill); color: var(--label-2); font-size: 13px; font-weight: 500; white-space: nowrap; transition: background 0.15s, color 0.15s; }
+.rt-via.active { background: var(--accent-tint); color: var(--accent); }
+
+/* Train lines: colored chips like transit maps ("JY › JC"); details of the selected option */
+.line-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; vertical-align: middle; }
+.line-chip { display: inline-block; max-width: 9em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px 6px; border-radius: 5px; font-size: 11px; font-weight: 700; line-height: 16px; }
+.line-chip-arrow { color: var(--label-3); font-size: 13px; line-height: 1; }
+.station-result .sr-pref { margin-left: 8px; font-size: 12px; font-weight: 400; color: var(--label-2); }
+.sr-lines { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px; }
+.sr-more { font-size: 11px; color: var(--label-2); line-height: 18px; }
+.route-alt-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.route-alt-dist { font-size: 13px; color: var(--label-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.route-alt-legs { display: none; margin-top: 6px; }
+.route-alt-item.selected .route-alt-legs { display: block; }
+.alt-leg { display: flex; gap: 8px; margin-top: 4px; font-size: 12px; line-height: 1.45; color: var(--label-2); }
+.alt-leg i { flex-shrink: 0; width: 4px; border-radius: 2px; }
+.alt-leg b { font-weight: 600; color: var(--label); }
+#rd-legs .alt-leg { font-size: 14px; }
+.route-legs { margin-top: 4px; }
 
 /* Icon & Color Picker (in add/edit place modal) */
 #icon-picker { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -493,6 +513,7 @@ button:not(:disabled):not(.car-nav):not(.lb-nav):active, .tab:active, .tag-filte
   #info-panel, #poi-card, #route-alt-modal, #route-point-menu { left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); top: auto; width: auto; transform: none; border-radius: 24px; }
   #info-panel, #poi-card, #route-alt-modal { padding: 24px 18px 18px; }
   #info-panel { max-height: 55vh; overflow-y: auto; }
+  #route-alt-modal { max-height: 62vh; }
   #info-panel::before, #poi-card::before, #route-alt-modal::before, .modal-box::before { content: ''; position: absolute; top: 6px; left: 50%; width: 36px; height: 5px; margin-left: -18px; border-radius: 3px; background: var(--label-3); }
   #info-panel h3, #poi-card h3 { font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
   #info-close, #poi-card-close { top: 16px; right: 14px; }

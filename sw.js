@@ -1,6 +1,7 @@
 // JPmap service worker — offline shell + photo caching
+// (data/rail/ goes through the network-first path below, so stations used once also work offline)
 // Bump the version whenever files are updated so clients pick up the new cache.
-const CACHE = 'jpmap-v4';
+const CACHE = 'jpmap-v5';
 
 const SHELL = [
   '.',
@@ -12,6 +13,7 @@ const SHELL = [
   'js/map.js',
   'js/photos.js',
   'js/gestures.js',
+  'js/rail.js',
   'manifest.json',
   'apple-touch-icon.png',
   'icon-512.png',

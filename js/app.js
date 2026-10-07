@@ -15,6 +15,10 @@ import { esc, placeIcon, placeColor, routeColor, byOrder, fmtDate, localToday, s
 import { BASEMAPS, JAPAN_VIEW, JP_FONTS, loadBaseStyle, searchPlaces, reverseName, fetchRoutes, fmtDistance, fmtDuration } from './map.js';
 import { MAX_PHOTOS, isFsPhoto, compressPhoto, photoUrl, uploadPhoto, deletePhoto, sharePhoto } from './photos.js';
 import { sheet, drawer, photoViewer } from './gestures.js';
+import {
+  loadRail, searchStations, nearestStation, stationLines, findRoutes, routeGeometry,
+  hasLegs, legFeatures, legChipsHtml, lineChipHtml, shortLineName, RAIL_ATTRIBUTION,
+} from './rail.js';
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
@@ -102,6 +106,7 @@ let topTransport = 'drive';       // for top search bar route mode
 let routeClickTarget = null;      // pending {lat,lng,label} when picking origin/dest from map in route mode
 let routeOriginCoord = null, routeDestCoord = null;  // precise coords when origin/dest picked from map
 let routePickTarget = null;       // 'origin'|'dest' — armed field waiting for a sidebar place pick
+let routeStations = { origin: null, dest: null, via: null };  // stations chosen for a train route (rail.js)
 let pendingRoute = null;          // computed route awaiting details-form confirmation
 let pendingRouteColor = '#378ADD';  // selected color in route details modal
 let editingRouteId = null;        // set when editing an existing route via the details modal
@@ -263,7 +268,7 @@ async function initMap() {
     center: JAPAN_VIEW.center,
     zoom: JAPAN_VIEW.zoom,
     localIdeographFontFamily: JP_FONTS,
-    attributionControl: { compact: true },
+    attributionControl: { compact: true, customAttribution: RAIL_ATTRIBUTION },
     // Keep the map north-up and flat, like before
     dragRotate: false,
     pitchWithRotate: false,
@@ -300,39 +305,58 @@ function addOverlayLayers() {
   });
   const round = { 'line-join': 'round', 'line-cap': 'round' };
 
-  // Saved routes: solid line + per-transport dash marks + a wide invisible line for easier clicks
+  // Saved routes: solid line + per-transport dash marks + a wide invisible line for easier clicks.
+  // Train routes with legs ('rail') are drawn like Google Maps transit: each line in its own color
+  // over a white casing, with white dots at the start, transfers and the end.
+  const isLine = ['==', ['geometry-type'], 'LineString'];
+  const isRail = ['==', ['get', 'transport'], 'rail'];
+  const stopDot = (filter) => ({
+    type: 'circle', minzoom: 8, filter,
+    paint: {
+      'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 2.5, 13, 4.5],
+      'circle-color': '#fff', 'circle-stroke-width': 1.5, 'circle-stroke-color': '#3a3a3c',
+    },
+  });
   map.addLayer({
-    id: 'route-line', type: 'line', source: 'routes', layout: round,
+    id: 'route-casing', type: 'line', source: 'routes', layout: round, filter: ['all', isLine, isRail],
+    paint: { 'line-color': '#fff', 'line-width': ['case', ['get', 'sel'], 9, 6.5], 'line-opacity': ['case', ['get', 'sel'], 1, 0.75] },
+  });
+  map.addLayer({
+    id: 'route-line', type: 'line', source: 'routes', layout: round, filter: isLine,
     paint: {
       'line-color': ['get', 'color'],
-      'line-width': ['case', ['get', 'sel'], 5, 3],
-      'line-opacity': ['case', ['get', 'sel'], 1, 0.75],
+      'line-width': ['case', isRail, ['case', ['get', 'sel'], 6, 4], ['case', ['get', 'sel'], 5, 3]],
+      'line-opacity': ['case', ['get', 'sel'], 1, isRail, 0.9, 0.75],
     },
   });
   Object.entries(TRANSPORT).forEach(([key, t]) => map.addLayer({
-    id: `route-dash-${key}`, type: 'line', source: 'routes', filter: ['==', ['get', 'transport'], key],
+    id: `route-dash-${key}`, type: 'line', source: 'routes', filter: ['all', isLine, ['==', ['get', 'transport'], key]],
     // 6px marks repeating every dash[0]+dash[1] px (dasharray is in line widths)
     paint: { 'line-color': ['get', 'color'], 'line-width': 3, 'line-dasharray': [2, (t.dash[0] + t.dash[1] - 6) / 3] },
   }));
+  map.addLayer({ id: 'route-stops', source: 'routes', ...stopDot(['==', ['geometry-type'], 'Point']) });
   map.addLayer({
-    id: 'route-hit', type: 'line', source: 'routes',
+    id: 'route-hit', type: 'line', source: 'routes', filter: isLine,
     paint: { 'line-color': '#000', 'line-width': 14, 'line-opacity': 0 },
   });
 
-  // Computed route preview, driving alternatives, manual drawing
+  // Computed route preview, driving / train alternatives, manual drawing
   map.addLayer({
-    id: 'preview-line', type: 'line', source: 'preview', layout: round,
+    id: 'preview-line', type: 'line', source: 'preview', layout: round, filter: isLine,
     paint: { 'line-color': ['get', 'color'], 'line-width': 4, 'line-opacity': 0.6 },
   });
+  map.addLayer({ id: 'preview-stops', source: 'preview', ...stopDot(['==', ['geometry-type'], 'Point']) });
   map.addLayer({
-    id: 'alt-line', type: 'line', source: 'alts',
+    id: 'alt-line', type: 'line', source: 'alts', filter: isLine,
     layout: { ...round, 'line-sort-key': ['case', ['get', 'sel'], 10, 1] },
     paint: {
-      'line-color': ['case', ['get', 'sel'], '#185FA5', '#9AA5B1'],
+      // Train options carry their line colors; driving options are blue
+      'line-color': ['case', ['get', 'sel'], ['coalesce', ['get', 'color'], '#185FA5'], '#9AA5B1'],
       'line-width': ['case', ['get', 'sel'], 6, 4],
       'line-opacity': ['case', ['get', 'sel'], 0.95, 0.5],
     },
   });
+  map.addLayer({ id: 'alt-stops', source: 'alts', ...stopDot(['all', ['==', ['geometry-type'], 'Point'], ['get', 'sel']]) });
   map.addLayer({
     id: 'draw-line', type: 'line', source: 'draw', layout: round,
     filter: ['==', ['geometry-type'], 'LineString'],
@@ -504,6 +528,14 @@ window.addPoiToMap = function() {
 // ── Route-mode map click: pick this point as origin or destination ──
 // Shows a small popup with two choices.
 async function handleRoutePointPick(ll, name) {
+  // Train: the nearest station
+  if (topTransport === 'train') {
+    const st = await stationNear(ll);
+    if (!st) return;
+    routeClickTarget = { lat: st.lat, lng: st.lng, label: `${st.name}站`, station: st };
+    showRoutePointMenu();
+    return;
+  }
   // Blank spot: reverse-geocode to a nearby name (station, shop, street…)
   const label = name || await reverseGeocodeLabel(ll);
   routeClickTarget = { lat: ll.lat, lng: ll.lng, label };
@@ -532,6 +564,7 @@ window.setRoutePoint = function(which) {
   if (!routeClickTarget) return;
   // Make sure the search bar is in route mode and visible
   setSearchMode('route');
+  if (routeClickTarget.station) { chooseStation(which, routeClickTarget.station); closeRoutePointMenu(); return; }
   const input = document.getElementById(which === 'origin' ? 'top-r-origin' : 'top-r-dest');
   if (input) input.value = routeClickTarget.label;
   // Store the actual coordinates so route search can use them precisely
@@ -566,22 +599,33 @@ function setupTopSearch() {
     input.value = r.name;
     routeDestCoord = { lat: r.lat, lng: r.lng };
   });
+  setupSearchInput('top-r-via', 'top-via-results', (r, input) => { input.value = r.name; });
 }
 
+// Route inputs → which train station they hold
+const ROUTE_FIELDS = { 'top-r-origin': 'origin', 'top-r-dest': 'dest', 'top-r-via': 'via' };
+
 // Search runs on Enter only (the free Nominatim server forbids search-as-you-type).
+// Train route fields are different: stations are searched in local data as the user types.
 function setupSearchInput(inputId, resultsId, onPick) {
   const input = document.getElementById(inputId);
   const results = document.getElementById(resultsId);
   if (!input || !results) return;
-  input.addEventListener('input', () => {
+  const field = ROUTE_FIELDS[inputId];
+  input.addEventListener('input', (e) => {
     // If the user manually edits a route input, drop any map-picked coordinate for that field
     if (inputId === 'top-r-origin') { routeOriginCoord = null; clearRoutePick(); }
     if (inputId === 'top-r-dest') { routeDestCoord = null; clearRoutePick(); }
+    if (field) routeStations[field] = null;
+    if (field && topTransport === 'train') { if (!e.isComposing) showStationResults(input, results, field); return; }
     results.classList.add('hidden');
   });
+  // Chinese / Japanese IME: search once the composed text is committed
+  input.addEventListener('compositionend', () => { if (field && topTransport === 'train') showStationResults(input, results, field); });
   input.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;  // ignore IME confirm
     e.preventDefault();
+    if (field && topTransport === 'train') { pickFirstStation(input, results, field); return; }
     const val = input.value.trim();
     if (val) runSearch(val, results, (r) => { results.classList.add('hidden'); onPick(r, input); });
   });
@@ -614,6 +658,64 @@ async function runSearch(q, results, onPick) {
   results.querySelectorAll('.search-result-item').forEach((el, i) => { el.onclick = () => onPick(list[i]); });
 }
 
+// ── Train stations (rail.js; the data loads the first time it is needed) ──
+let stationSearchSeq = 0, railLoaded = false;
+async function showStationResults(input, results, field) {
+  const q = input.value.trim();
+  const seq = ++stationSearchSeq;
+  if (!q) { results.classList.add('hidden'); return; }
+  if (!railLoaded) {  // first use downloads the station list (~0.7 MB)
+    results.innerHTML = '<div class="search-result-empty">載入車站資料中…</div>';
+    results.classList.remove('hidden');
+  }
+  let R;
+  try { R = await loadRail(); railLoaded = true; } catch (err) {
+    console.warn('Rail data error:', err);
+    results.innerHTML = '<div class="search-result-empty">鐵路資料載入失敗，請檢查網路後再試</div>';
+    results.classList.remove('hidden');
+    return;
+  }
+  if (seq !== stationSearchSeq) return;  // the user kept typing
+  const list = searchStations(R, q, 8);
+  results.innerHTML = list.length
+    ? list.map((s, i) => {
+      const lines = stationLines(R, s);
+      const chips = lines.slice(0, 6).map(l => lineChipHtml({ line: l.name, sym: l.sym, color: l.color })).join('');
+      return `<div class="search-result-item station-result" data-idx="${i}">
+        <div class="sr-name">${esc(s.name)}<span class="sr-pref">${esc(s.pref)}</span></div>
+        <div class="sr-lines">${chips}${lines.length > 6 ? `<span class="sr-more">+${lines.length - 6}</span>` : ''}</div>
+      </div>`;
+    }).join('')
+    : '<div class="search-result-empty">找不到這個車站</div>';
+  results.querySelectorAll('.search-result-item').forEach((el, i) => { el.onclick = () => chooseStation(field, list[i]); });
+  results.classList.remove('hidden');
+}
+
+const ROUTE_INPUT = { origin: 'top-r-origin', dest: 'top-r-dest', via: 'top-r-via' };
+function chooseStation(field, st) {
+  routeStations[field] = st;
+  document.getElementById(ROUTE_INPUT[field]).value = st.name;
+  document.getElementById({ origin: 'top-origin-results', dest: 'top-dest-results', via: 'top-via-results' }[field]).classList.add('hidden');
+}
+
+async function pickFirstStation(input, results, field) {
+  const q = input.value.trim();
+  if (!q) return;
+  try {
+    const [st] = searchStations(await loadRail(), q, 1);
+    if (st) chooseStation(field, st); else showStationResults(input, results, field);
+  } catch (err) { showStationResults(input, results, field); }
+}
+
+// Nearest station to a map point / saved place (train mode); null after telling the user why
+async function stationNear(ll) {
+  let R;
+  try { R = await loadRail(); } catch (err) { alert('鐵路資料載入失敗，請檢查網路後再試'); return null; }
+  const st = nearestStation(R, ll.lat, ll.lng, 2000);
+  if (!st) alert('這附近 2 公里內沒有車站');
+  return st;
+}
+
 // Arm an origin/dest field: the next sidebar place click fills it
 window.armRoutePick = function(which) {
   if (searchMode !== 'route') return;
@@ -637,18 +739,38 @@ window.setSearchMode = function(m) {
   document.getElementById('search-route-row').classList.toggle('hidden', m !== 'route');
 };
 
+const ROUTE_PLACEHOLDERS = {
+  train: ['起點車站（輸入站名，例：新宿）', '終點車站（輸入站名）'],
+  other: ['起點（點左側地標／地圖，或輸入後按 Enter）', '終點（點左側地標／地圖，或輸入後按 Enter）'],
+};
 window.selectTopTransport = function(t) {
   topTransport = t;
   ['drive', 'walk', 'train'].forEach(x => document.getElementById('rt-' + x).classList.toggle('active', x === t));
+  const train = t === 'train';
+  if (train) loadRail().then(() => { railLoaded = true; }).catch(() => {});  // warm up while the user types
+  const [po, pd] = ROUTE_PLACEHOLDERS[train ? 'train' : 'other'];
+  document.getElementById('top-r-origin').placeholder = po;
+  document.getElementById('top-r-dest').placeholder = pd;
+  document.getElementById('rt-via-toggle').classList.toggle('hidden', !train);
+  if (!train) showViaRow(false);
+  ['top-origin-results', 'top-dest-results', 'top-via-results'].forEach(id => document.getElementById(id).classList.add('hidden'));
 };
 
+window.toggleViaStation = function() { showViaRow(document.getElementById('top-via-row').classList.contains('hidden')); };
+function showViaRow(on) {
+  document.getElementById('top-via-row').classList.toggle('hidden', !on);
+  document.getElementById('rt-via-toggle').classList.toggle('active', on);
+  if (on) document.getElementById('top-r-via').focus();
+  else { document.getElementById('top-r-via').value = ''; routeStations.via = null; }
+}
+
 window.topSearchRoute = function() {
+  // Trains: find ways along the rail network (rail.js)
+  if (topTransport === 'train') { planTrainRoute(); return; }
   const originText = document.getElementById('top-r-origin').value.trim();
   const destText   = document.getElementById('top-r-dest').value.trim();
   if (!originText || !destText) { alert('請輸入起點和終點'); return; }
   const name = `${originText} → ${destText}`;
-  // No free railway routing for Japan → trains are hand-drawn
-  if (topTransport === 'train') { startManualDraw(name, 'train', null); return; }
   // Use precise coordinates if the point was picked from the map/list, else look up the typed text
   const origin = routeOriginCoord || originText;
   const dest   = routeDestCoord || destText;
@@ -732,12 +854,14 @@ function syncRoutePolylines() {
   if (!mapReady) return;
   const features = (restaurantMode || routesHidden) ? [] : routes
     .filter(r => !(r.tripId && hiddenTripIds.has(r.tripId)) && Array.isArray(r.points) && r.points.length >= 2)
-    .map(r => lineFeature(r.points, {
-      id: r.id,
-      color: routeColor(r),
-      transport: TRANSPORT[r.transport] ? r.transport : 'drive',
-      sel: selectedRouteId === r.id,
-    }));
+    .flatMap(r => hasLegs(r)
+      ? legFeatures(r, { id: r.id, transport: 'rail', sel: selectedRouteId === r.id })
+      : [lineFeature(r.points, {
+        id: r.id,
+        color: routeColor(r),
+        transport: TRANSPORT[r.transport] ? r.transport : 'drive',
+        sel: selectedRouteId === r.id,
+      })]);
   setOverlay('routes', { type: 'FeatureCollection', features });
 }
 
@@ -756,7 +880,8 @@ function showRouteTooltip(lngLat, r) {
   if (routeTooltipId !== r.id) {
     const t = TRANSPORT[r.transport] || TRANSPORT.drive;
     const fareStr = r.fare ? `｜¥${esc(String(r.fare))}` : '';
-    routeTooltip.setHTML(`<b>${esc(r.name)}</b><br>交通方式：${t.label}${r.cat ? '｜' + esc(r.cat) : ''}${fareStr}`);
+    const legsStr = hasLegs(r) ? `<br>${r.legs.map(g => esc(shortLineName(g.line))).join(' → ')}` : '';
+    routeTooltip.setHTML(`<b>${esc(r.name)}</b><br>交通方式：${t.label}${r.cat ? '｜' + esc(r.cat) : ''}${fareStr}${legsStr}`);
     routeTooltipId = r.id;
   }
   routeTooltip.setLngLat(lngLat);
@@ -781,7 +906,12 @@ function selectPlace(id) {
   // Route-pick mode: clicking a sidebar place fills the armed origin/dest field
   if (searchMode === 'route' && routePickTarget) {
     const p = places.find(x => x.id === id);
-    if (p) {
+    if (p && topTransport === 'train') {
+      // Train: the station nearest to the saved place (e.g. the hotel)
+      const which = routePickTarget;
+      clearRoutePick();
+      stationNear(p).then(st => { if (st) chooseStation(which, st); });
+    } else if (p) {
       const input = document.getElementById(routePickTarget === 'origin' ? 'top-r-origin' : 'top-r-dest');
       input.value = p.name;
       if (routePickTarget === 'origin') routeOriginCoord = { lat: p.lat, lng: p.lng };
@@ -1209,7 +1339,7 @@ window.editRoute = function(id) {
   const r = routes.find(x => x.id === id);
   if (!r) return;
   editingRouteId = id;
-  pendingRoute = { name: r.name, transport: r.transport, points: r.points || [] };
+  pendingRoute = { name: r.name, transport: r.transport, points: r.points || [], legs: hasLegs(r) ? r.legs : undefined };
   document.getElementById('rd-name').value = r.name || '';
   document.getElementById('rd-cat').value = r.cat || ROUTE_CATEGORIES[0];
   document.getElementById('rd-transport').value = r.transport || 'drive';
@@ -1218,6 +1348,7 @@ window.editRoute = function(id) {
   document.getElementById('rd-fare').value = r.fare || '';
   pendingRouteColor = routeColor(r);
   renderRouteColorPicker();
+  renderRouteLegs();
   onRouteTransportChange();
   refreshRouteTripDropdown();
   document.getElementById('rd-trip').value = r.tripId || '';
@@ -1244,13 +1375,20 @@ function routeItemHtml(r, scope) {
   const dataAttrs = `data-item-kind="route" data-item-id="${r.id}" data-scope="${scope || 'all'}"`;
   const dragAttrs = (mode === 'delete' || !scope) ? '' :
     `draggable="true" ondragstart="onItemDragStart(event)" ondragover="onItemDragOver(event)" ondrop="onItemDrop(event)" ondragend="onItemDragEnd(event)"`;
+  // Train routes with legs: swatch striped in the line colors, transfers instead of point count, line chips
+  const legs = hasLegs(r) ? r.legs : null;
+  const swatch = legs
+    ? `linear-gradient(to right, ${legs.map((g, i) => `${esc(g.color)} ${i * 100 / legs.length}% ${(i + 1) * 100 / legs.length}%`).join(', ')})`
+    : color;
+  const countStr = legs ? (legs.length > 1 ? `換車 ${legs.length - 1} 次` : '直達') : `${(r.points || []).length} 個節點`;
   return `<div class="route-item${sel ? ' selected' : ''}${delSel ? ' delete-selected' : ''}" ${dataAttrs} ${dragAttrs} onclick="selectRoute('${r.id}')">
     ${mode === 'delete' ? `<div class="delete-checkbox${delSel ? ' checked' : ''}"></div>` : ''}
     ${heart}
-    <div class="route-swatch" style="background:${color};"></div>
+    <div class="route-swatch" style="background:${swatch};"></div>
     <div class="route-info">
       <div class="route-name">${esc(r.name)}</div>
-      <div class="route-meta">${r.date || ''}${r.date ? ' · ' : ''}${(r.points || []).length} 個節點${kmStr}${fareStr}</div>
+      <div class="route-meta">${r.date || ''}${r.date ? ' · ' : ''}${countStr}${kmStr}${fareStr}</div>
+      ${legs ? `<div class="route-legs">${legChipsHtml(legs)}</div>` : ''}
       <span class="transport-badge" style="background:${color}22;color:${color};">${t.label}</span>${catBadge}
     </div>
     ${editBtn}
@@ -2171,7 +2309,81 @@ async function searchAndSaveRoute(origin, dest, name, transport, triggerBtnId) {
 function clearTopRouteInputs() {
   document.getElementById('top-r-origin').value = '';
   document.getElementById('top-r-dest').value = '';
+  document.getElementById('top-r-via').value = '';
   routeOriginCoord = null; routeDestCoord = null;
+  routeStations = { origin: null, dest: null, via: null };
+}
+
+// ── Train route: stations → up to 3 ways along the rail network → pick one → details form ──
+async function planTrainRoute() {
+  const btn = document.getElementById('top-route-go');
+  const origText = btn.textContent;
+  btn.textContent = '搜尋中...'; btn.disabled = true;
+  try {
+    const R = await loadRail();
+    // A typed name that was not picked from the list → best match
+    const station = (field) => {
+      const text = document.getElementById(ROUTE_INPUT[field]).value.trim();
+      if (!text) return null;
+      const st = routeStations[field];
+      return st && st.name === text ? st : (searchStations(R, text, 1)[0] || { missing: text });
+    };
+    const from = station('origin'), to = station('dest');
+    const via = document.getElementById('top-via-row').classList.contains('hidden') ? null : station('via');
+    if (!from || !to) { alert('請輸入起點和終點車站'); return; }
+    const missing = [from, to, via].find(s => s && s.missing);
+    if (missing) { alert(`找不到「${missing.missing}」這個車站，請從下拉選單選擇`); return; }
+    if (from.i === to.i) { alert('起點和終點是同一站'); return; }
+    const name = `${from.name} → ${to.name}`;
+    const found = findRoutes(R, from.i, to.i, via ? via.i : null);
+    if (!found.length) {
+      if (confirm('找不到這兩站之間的電車路線（可能要走路到別的車站轉乘）。\n\n要改用「手繪路線」嗎？\n（在地圖上逐點點擊，雙擊完成）')) startManualDraw(name, 'train', null);
+      return;
+    }
+    const options = await Promise.all(found.map(r => routeGeometry(R, r)));
+    openTrainAlternativesPicker(options, name);
+  } catch (err) {
+    console.warn('Train route error:', err);
+    alert('鐵路資料載入失敗，請檢查網路後再試');
+  } finally {
+    btn.textContent = origText; btn.disabled = false;
+  }
+}
+
+function openTrainAlternativesPicker(options, name) {
+  altPickerData = { kind: 'train', found: options, name, transport: 'train', selectedIndex: 0 };
+  setOverlay('preview', EMPTY_FC);
+  drawAltPreviews();
+  document.querySelector('#route-alt-modal h3').textContent = '選擇搭法';
+  document.querySelector('#route-alt-modal .route-alt-hint').textContent = '點下方清單或地圖上的路線選擇：';
+  document.getElementById('route-alt-list').innerHTML = options.map((o, i) => {
+    const stops = o.legs.reduce((a, g) => a + g.stops, 0);
+    return `<div class="route-alt-item train-alt" data-idx="${i}" onclick="selectAltRoute(${i})">
+      <div class="route-alt-top">${legChipsHtml(o.legs)}<span class="route-alt-dist">${fmtKm({ km: o.distanceMeters / 1000 })}</span></div>
+      <div class="route-alt-meta">${o.legs.length > 1 ? `換車 ${o.legs.length - 1} 次` : '直達'} · 坐 ${stops} 站</div>
+      <div class="route-alt-legs">${o.legs.map(g => `<div class="alt-leg"><i style="background:${esc(g.color)};"></i><span>${esc(g.line)}<br><b>${esc(g.from)} → ${esc(g.to)}</b>（${g.stops} 站）</span></div>`).join('')}</div>
+    </div>`;
+  }).join('');
+  updateAltListSelection();
+  const modal = document.getElementById('route-alt-modal');
+  modal.classList.remove('hidden');
+  // Show every option: leave room for the search bar and the picker (side panel / bottom sheet)
+  const b = new maplibregl.LngLatBounds();
+  options.forEach(o => o.points.forEach(p => b.extend([p.lng, p.lat])));
+  const phone = window.matchMedia('(max-width: 640px)').matches;
+  const box = modal.getBoundingClientRect();
+  map.fitBounds(b, {
+    padding: phone ? { top: 150, bottom: Math.min(box.height + 24, map.getContainer().clientHeight * 0.55), left: 30, right: 30 }
+                   : { top: 60, bottom: 40, left: 40, right: box.width + 50 },
+    maxZoom: 14, duration: 600,
+  });
+}
+
+// Chosen train option → preview on the map and the details form
+function saveTrainRoute(o, name) {
+  setOverlay('preview', { type: 'FeatureCollection', features: legFeatures(o, {}) });
+  pendingRoute = { name, transport: 'train', points: o.points, legs: o.legs, distanceMeters: o.distanceMeters };
+  openRouteDetailsModal(name);
 }
 
 function saveRouteFromResult(found, name, transport, routeIndex) {
@@ -2224,6 +2436,8 @@ function openRouteAlternativesPicker(found, name, transport) {
   altPickerData = { found, name, transport, selectedIndex: 0 };
   setOverlay('preview', EMPTY_FC);
   drawAltPreviews();
+  document.querySelector('#route-alt-modal h3').textContent = '選擇路線';
+  document.querySelector('#route-alt-modal .route-alt-hint').textContent = '點地圖上的線段或下方清單選路線：';
   // Populate the floating list
   const list = document.getElementById('route-alt-list');
   list.innerHTML = found.map((rt, i) =>
@@ -2237,10 +2451,12 @@ function openRouteAlternativesPicker(found, name, transport) {
 }
 
 function drawAltPreviews() {
-  const { found, selectedIndex } = altPickerData;
+  const { kind, found, selectedIndex } = altPickerData;
   setOverlay('alts', {
     type: 'FeatureCollection',
-    features: found.map((rt, i) => lineFeature(rt.points, { idx: i, sel: i === selectedIndex })),
+    features: kind === 'train'
+      ? found.flatMap((o, i) => legFeatures(o, { idx: i, sel: i === selectedIndex }))
+      : found.map((rt, i) => lineFeature(rt.points, { idx: i, sel: i === selectedIndex })),
   });
 }
 
@@ -2261,11 +2477,12 @@ function updateAltListSelection() {
 
 window.confirmRouteAlternative = function() {
   if (!altPickerData) return;
-  const { found, name, transport, selectedIndex } = altPickerData;
+  const { kind, found, name, transport, selectedIndex } = altPickerData;
   clearAltPreviews();
   document.getElementById('route-alt-modal').classList.add('hidden');
   altPickerData = null;
-  saveRouteFromResult(found, name, transport, selectedIndex);
+  if (kind === 'train') saveTrainRoute(found[selectedIndex], name);
+  else saveRouteFromResult(found, name, transport, selectedIndex);
 };
 
 window.closeRouteAltModal = function() {
@@ -2369,6 +2586,7 @@ function openRouteDetailsModal(defaultName) {
   // Default route color = the transport's default color, but user can change it
   pendingRouteColor = (TRANSPORT[pendingRoute.transport] || TRANSPORT.drive).color;
   renderRouteColorPicker();
+  renderRouteLegs();
   onRouteTransportChange();  // show/hide fare row based on transport
   refreshRouteTripDropdown();
   const rdTrip = document.getElementById('rd-trip');
@@ -2377,11 +2595,22 @@ function openRouteDetailsModal(defaultName) {
   document.getElementById('route-details-modal').classList.remove('hidden');
 }
 
-// Show the fare field only when transport is 電車
+// Show the fare field only when transport is 電車. A train route with legs is drawn in its
+// line colors, so the color picker is hidden (switching away from 電車 drops the legs on save).
 window.onRouteTransportChange = function() {
   const isTrain = document.getElementById('rd-transport').value === 'train';
+  const legsOn = isTrain && !!(pendingRoute && pendingRoute.legs);
   document.getElementById('rd-fare-row').classList.toggle('hidden', !isTrain);
+  document.getElementById('rd-legs-row').classList.toggle('hidden', !legsOn);
+  document.getElementById('rd-color-row').classList.toggle('hidden', legsOn);
 };
+
+function renderRouteLegs() {
+  const legs = pendingRoute && pendingRoute.legs;
+  document.getElementById('rd-legs').innerHTML = legs
+    ? legs.map(g => `<div class="alt-leg"><i style="background:${esc(g.color)};"></i><span>${esc(g.line)}<br><b>${esc(g.from)} → ${esc(g.to)}</b>（${g.stops} 站）</span></div>`).join('')
+    : '';
+}
 
 function renderRouteColorPicker() {
   const wrap = document.getElementById('rd-color-picker');
@@ -2416,6 +2645,10 @@ window.saveRouteDetails = async function() {
     tripId: document.getElementById('rd-trip').value || '',
   };
   if (typeof pendingRoute.distanceMeters === 'number') data.distanceMeters = pendingRoute.distanceMeters;
+  if (pendingRoute.legs) {
+    if (transport === 'train') data.legs = pendingRoute.legs;
+    else if (editingRouteId) data.legs = null;   // no longer a train: back to a single color
+  }
   if (editingRouteId) {
     await updateRoute(editingRouteId, data);
     editingRouteId = null;
@@ -2639,6 +2872,8 @@ window.shareTrip = async function (tripId) {
       name: r.name || '',
       transport: r.transport || 'drive',
       points: r.points.map(pt => ({ lat: pt.lat, lng: pt.lng })),
+      // Train legs (line colors); the share page draws them like the main map
+      ...(hasLegs(r) ? { legs: r.legs.map(g => ({ line: g.line || '', sym: g.sym || '', color: g.color || '', from: g.from || '', to: g.to || '', stops: g.stops || 0, i0: g.i0, i1: g.i1 })) } : {}),
     }));
 
   if (sPlaces.length === 0 && sRoutes.length === 0) {

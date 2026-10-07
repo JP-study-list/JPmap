@@ -155,13 +155,13 @@
 > 2026-10-02 由 social-bookmark 視窗的討論整理而來（使用者已確認方向）。金鑰類不寫此處。
 
 ### 技術棧（一行摘要）
-無 build step 的靜態 PWA：`index.html` + `js/app.js`（ES module，主程式）+ `js/config.js` + `js/helpers.js` + `js/map.js`（底圖與免費地理服務）+ `js/photos.js`（照片）+ `js/gestures.js`（觸控手勢）+ `css/style.css`，另有 `share.html`（唯讀分享頁）；Firebase Auth（Email/密碼 + Google 登入）+ Firestore（有開 `persistentLocalCache` 離線快取）；部署 GitHub Pages。地圖：**MapLibre GL JS 5.24.0（jsdelivr CDN）+ OpenFreeMap 底圖**（2026-10-04 取代 Google Maps；6.x 只有 ES module 版、2026-07 才發布，暫不升級）。
+無 build step 的靜態 PWA：`index.html` + `js/app.js`（ES module，主程式）+ `js/config.js` + `js/helpers.js` + `js/map.js`（底圖與免費地理服務）+ `js/photos.js`（照片）+ `js/gestures.js`（觸控手勢）+ `js/rail.js`（電車路線）+ `css/style.css`，另有 `share.html`（唯讀分享頁）；鐵路資料 `data/rail/`（由 `tools/build-rail.mjs` 離線產生後 commit）；Firebase Auth（Email/密碼 + Google 登入）+ Firestore（有開 `persistentLocalCache` 離線快取）；部署 GitHub Pages。地圖：**MapLibre GL JS 5.24.0（jsdelivr CDN）+ OpenFreeMap 底圖**（2026-10-04 取代 Google Maps；6.x 只有 ES module 版、2026-07 才發布，暫不升級）。
 
 ### Firebase
 - Project ID：`japan-map-500903`
 - collection 與欄位：
   - `places`：`name`、`tag`（分類）、`foodType`、`date`、`note`、`photos[]`（最多 5：`fs:<photos 文件ID>` 或舊的圖片網址）、`rating`、`icon`、`color`、`tripId`、`wishlist`、`favorite`、`order`、`lat`、`lng`、`uid`、`createdAt`
-  - `routes`：`name`、`transport`（`drive`/`walk`/`train`）、`points[{lat,lng}]`（目前存檔時降採樣到約 200 點）、`cat`、`color`、`date`、`note`、`fare`、`tripId`、`distanceMeters`、`favorite`、`order`、`uid`、`createdAt`
+  - `routes`：`name`、`transport`（`drive`/`walk`/`train`）、`points[{lat,lng}]`（開車／走路存檔時降採樣到約 200 點；用站名規劃的電車最多約 1500 點）、`legs[]`（只有用站名規劃的電車有：每段 `line`、`code`、`sym`、`color`、`from`、`to`、`stops`、`i0`／`i1` = 對應 `points` 的索引；改成非電車時存 `null`）、`cat`、`color`、`date`、`note`、`fare`、`tripId`、`distanceMeters`、`favorite`、`order`、`uid`、`createdAt`
   - `trips`：`name`、`start`、`end`、`order`、`uid`、`createdAt`
   - `shares`：唯讀分享快照（`tripName`、`tripDate`、`places[]`、`routes[]`、`owner`、`createdAt`），`share.html?id=` 以文件 ID 讀取
   - `photos`（2026-10-04 起）：`uid`、`data`（Bytes，JPEG，長邊 ≤1280、<900KB、已去除中繼資料）、`w`、`h`、`shared`（分享行程時設 true，有連結的人可讀）、`createdAt`
@@ -178,7 +178,8 @@
 - 地圖服務（2026-10-04 起，全部免費、免金鑰，皆支援 CORS）：
   - **OpenFreeMap** 底圖：無用量上限；必須顯示出處（樣式內建，MapLibre 右下角自動顯示）。彩色 `liberty`／淡色 `positron`。
   - **Nominatim**（OSM 搜尋／反查）：每秒最多 1 次（`map.js` 內有佇列）、**禁止邊打邊搜**，所以只在按 Enter 時搜尋。繁中可搜到知名景點，小店常沒資料。
-  - **OSRM**（FOSSGIS 公共伺服器 `routing.openstreetmap.de`）：開車（含替代路線）、走路；限非商業、每秒 1 次、不保證穩定。**沒有電車路線**，電車一律手繪。
+  - **OSRM**（FOSSGIS 公共伺服器 `routing.openstreetmap.de`）：開車（含替代路線）、走路；限非商業、每秒 1 次、不保證穩定。沒有電車路線。
+  - **電車**（2026-10-07 起）：`js/rail.js` 用 repo 內的 `data/rail/`（[station_database](https://github.com/Seo-4d696b75/station_database)，**CC BY-SA 4.0**，地圖出處已標示；加工後的資料也要維持同授權）打站名搜尋、沿鐵軌找最多 3 種搭法、每段用線路代表色畫。不連外部服務；手繪保留為找不到路線時的備案。更新資料見 `data/rail/README.md`。
 - Google Maps JS API、Places、Directions、Geocoder：已停用且程式不再使用。**注意：舊 Maps 金鑰與 `config.js` 的 Firebase `apiKey` 是同一把，絕不可刪除**（會讓登入與資料庫失效）；如要收斂，只在 Google Cloud Console 的金鑰「API 限制」取消 Maps 相關 API。
 - 舊 iOS 捷徑：拍照 → 上傳到 repo `photos/` → 開 `index.html?quickadd=1&lat=&lng=&photo=&date=`。計畫淘汰（見 progress.md）。
 
@@ -188,7 +189,8 @@
 - `share.html` 內複製了一份 config（分類樣式、圖示、交通方式），改 `config.js` 時要同步。底圖則從 `js/map.js` 載入（不再完全獨立）。
 - MapLibre 的 zoom 比 Google 小 1（512px 圖磚）；從舊程式搬數值時要減 1。
 - OpenFreeMap 樣式本身會在 console 印出「Expected value to be of type number, but found null instead.」警告（未修改的樣式也會），可忽略。
-- 我們的圖層（路線、地點、預覽、手繪）在切換底圖時會被 `setStyle` 清掉，靠 `onStyleLoad` 依 `overlayData` 重建；新增圖層時要放進 `addOverlayLayers`。
+- 我們的圖層（路線、地點、預覽、手繪）在切換底圖時會被 `setStyle` 清掉，靠 `onStyleLoad` 依 `overlayData` 重建；新增圖層時要放進 `addOverlayLayers`。路線類來源同時有線（LineString）和換車站白點（Point），新增的線圖層要用 `geometry-type` 篩選。
+- 電車找路：沒有時刻表，搭法排序用粗估時間；**不支援走路轉乘到別的站**（例如 梅田↔大阪、新宿↔新宿三丁目），要選實際上車的那一站。3 段沒有線形用直線（JR武蔵野線 西船橋–南船橋、JR芸備線 新見–布原–備中神代）。`rail.js` 的 `legFeatures` 主程式與分享頁共用。
 - 路線存檔的降採樣（`saveRouteFromResult`）實際最多約 2×200 點（沿用舊邏輯），階段 2 重新設計。
 - 舊的時間軸匯入（`parseGoogleTimeline`）只支援 Google 舊匯出格式，且每段移動只取起終點（畫成直線）。
 - 日期一律用 `helpers.js` 的 `fmtDate`/`localToday`（本地時區），不用 `toISOString()`。
