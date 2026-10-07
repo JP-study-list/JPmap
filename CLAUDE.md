@@ -190,7 +190,6 @@
 - OpenFreeMap 樣式本身會在 console 印出「Expected value to be of type number, but found null instead.」警告（未修改的樣式也會），可忽略。
 - 我們的圖層（路線、地點、預覽、手繪）在切換底圖時會被 `setStyle` 清掉，靠 `onStyleLoad` 依 `overlayData` 重建；新增圖層時要放進 `addOverlayLayers`。
 - 路線存檔的降採樣（`saveRouteFromResult`）實際最多約 2×200 點（沿用舊邏輯），階段 2 重新設計。
-- 「建築物」分類存在於選單與篩選列，但 `config.js` 沒有對應的預設圖示／顏色（會退回灰色圖釘）。
 - 舊的時間軸匯入（`parseGoogleTimeline`）只支援 Google 舊匯出格式，且每段移動只取起終點（畫成直線）。
 - 日期一律用 `helpers.js` 的 `fmtDate`/`localToday`（本地時區），不用 `toISOString()`。
 - 介面（2026-10-04 依 Apple 原則改版）：開關畫面一律用 `.hidden`，進出動畫靠 CSS（`transition-behavior: allow-discrete` + `@starting-style`），新增會開關的元件時要加進 style.css 的「Enter / exit」區塊。手勢拖曳用 CSS `translate` 屬性（不碰 `transform`）。按鈕的按下縮放會排除用 transform 定位的按鈕（`.car-nav`、`.lb-nav`），新增這類按鈕時也要排除。`share.html` 的樣式是獨立一份，改設計變數時要同步。

@@ -1,5 +1,11 @@
 # progress.md — 開發歷史（最新在上）
 
+## 2026-10-07（補「建築物」分類圖示）
+- 類型：修正
+- 影響檔案：js/config.js, share.html, CLAUDE.md
+- 摘要：「建築物」分類補上預設圖示（`index.html` 早已有但沒接上的 `pin-building` 大樓圖示）與顏色（棕 `#7A5C3E`）、分類標籤配色；圖示選單多一個「建築」。分享頁的設定副本同步。
+- 驗證：Playwright + 假 Firebase 6/6（地圖標記、清單、編輯時預選圖示、分享頁）。
+
 ## 2026-10-04（介面依 Apple 設計原則改版）
 - 類型：重構（介面）
 - 影響檔案：css/style.css（改寫）, js/gestures.js（新增）, js/app.js, index.html, share.html, sw.js, CLAUDE.md, project-index.md

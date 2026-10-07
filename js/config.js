@@ -34,6 +34,7 @@ export const TAG_STYLE = {
   '活動': { bg: '#FDF6D8', text: '#7A5B00' },
   '美術館/博物館': { bg: '#F3E9F7', text: '#5B2C6F' },
   '景點': { bg: '#E4F5F8', text: '#0B5E6E' },
+  '建築物': { bg: '#F3ECE4', text: '#5A3E22' },
 };
 
 // Icon catalog — keys map to SVG symbol ids in index.html (pin-*).
@@ -51,20 +52,21 @@ export const ICON_CATALOG = {
   heart:    { label: '愛心' },
   star:     { label: '星星' },
   museum:   { label: '博物館' },
+  building: { label: '建築' },
 };
 
 // Default icon per category
 export const TAG_DEFAULT_ICON = {
   '美食': 'food', '神社': 'shrine', '自然': 'nature', '文化': 'castle',
   '購物': 'shopping', '住宿': 'lodging', '交通': 'station', '活動': 'star',
-  '美術館/博物館': 'museum', '景點': 'camera',
+  '美術館/博物館': 'museum', '景點': 'camera', '建築物': 'building',
 };
 
 // Default color per category
 export const TAG_DEFAULT_COLOR = {
   '美食': '#E8833A', '神社': '#0E8A6E', '自然': '#4C9A2A', '文化': '#6C5CE7',
   '購物': '#D6336C', '住宿': '#2B7DE9', '交通': '#C0392B', '活動': '#F1B807',
-  '美術館/博物館': '#8E44AD', '景點': '#17A2B8',
+  '美術館/博物館': '#8E44AD', '景點': '#17A2B8', '建築物': '#7A5C3E',
 };
 
 // Color palette for the pickers
@@ -85,6 +87,7 @@ export const ICON_SVG_PATHS = {
   heart:    '<path d="M12 20s-7-4.6-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.4-7 10-7 10Z" fill="none" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/>',
   star:     '<path d="m12 3 2.6 5.6 6 .8-4.4 4.2 1.1 6L12 16.8 6.7 19.6l1.1-6L3.4 9.4l6-.8L12 3Z" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>',
   museum:   '<path d="M4 9.5 12 4l8 5.5M5 9.5h14" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M7 12v5M12 12v5M17 12v5M4.5 20h15M6 17h12" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round"/>',
+  building: '<path d="M5 21V6a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v15M13 21V11a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v10M3.5 21h17M7.5 8.5h2M7.5 12h2M7.5 15.5h2M15.5 13.5h1M15.5 17h1" fill="none" stroke="#fff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
 };
 
 // Restaurant sub-types (second dropdown when tag = 美食)
