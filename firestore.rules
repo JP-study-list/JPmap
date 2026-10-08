@@ -1,15 +1,24 @@
 rules_version = '2';
 
 // 2026-10-04 與 Firebase Console 線上版本同步，並加入 photos 規則、收緊 shares。
+// 2026-10-08 加入個人OS 的助手帳號與「待整理」(inbox)，見 docs/personal-os.md。
 // 修改流程：改這個檔 → 整份貼到 Firebase Console → Firestore → 規則 → 發布。
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Places: 只有本人可以讀寫
+    // ── 個人OS 的助手帳號 ──
+    // 只能讀你的地點和行程、把提案丟進「待整理」；不能改、不能刪你的任何資料。
+    // UID 不是密碼，寫在這裡沒關係（密碼只在 mac 鑰匙圈）。要停用助手：在 Firebase Console 停用那個帳號。
+    function ownerUid() { return 'OWNER_UID'; }   // 你的帳號
+    function isBot() { return request.auth != null && request.auth.uid == 'BOT_UID'; }   // 助手帳號
+    function botReadsOwner() { return isBot() && resource.data.uid == ownerUid(); }
+
+    // Places: 只有本人可以讀寫；助手只能讀
     match /places/{placeId} {
       allow read, write: if request.auth != null && request.auth.uid == resource.data.uid;
       allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
+      allow read: if botReadsOwner();
     }
 
     // Routes: 只有本人可以讀寫
@@ -18,10 +27,51 @@ service cloud.firestore {
       allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
     }
 
-    // Trips: 只有本人可以讀寫
+    // Trips: 只有本人可以讀寫；助手只能讀
     match /trips/{tripId} {
       allow read, write: if request.auth != null && request.auth.uid == resource.data.uid;
       allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
+      allow read: if botReadsOwner();
+    }
+
+    // Inbox（待整理）: 提案。本人可讀、刪、建立，修改只能改狀態；
+    // 助手可讀（避免重複提案）、建立格式正確的新提案，不能改也不能刪
+    match /inbox/{itemId} {
+      allow read, delete: if request.auth != null && request.auth.uid == resource.data.uid;
+      allow create: if request.auth != null && request.auth.uid == request.resource.data.uid;
+      allow update: if request.auth != null && request.auth.uid == resource.data.uid
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'decidedAt'])
+                    && request.resource.data.status in ['pending', 'accepted', 'dismissed'];
+      allow read: if botReadsOwner();
+      allow create: if isBot() && request.resource.data.uid == ownerUid() && validProposal(request.resource.data);
+    }
+
+    function optString(m, k, max) { return !(k in m) || (m[k] is string && m[k].size() <= max); }
+    function validPlace(p) {
+      return p is map
+        && p.keys().hasOnly(['name', 'lat', 'lng', 'date', 'wishlist', 'tag', 'note', 'url'])
+        && p.name is string && p.name.size() > 0 && p.name.size() <= 100
+        && p.lat is number && p.lat >= -90 && p.lat <= 90
+        && p.lng is number && p.lng >= -180 && p.lng <= 180
+        && (!('date' in p) || (p.date is string && p.date.size() == 10))
+        && (!('wishlist' in p) || p.wishlist is bool)
+        && optString(p, 'tag', 20) && optString(p, 'note', 1000) && optString(p, 'url', 500);
+    }
+    function validTrip(t) {
+      return t is map
+        && t.keys().hasOnly(['name', 'start', 'end'])
+        && t.name is string && t.name.size() > 0 && t.name.size() <= 100
+        && t.start is string && t.start.size() == 10
+        && t.end is string && t.end.size() == 10;
+    }
+    function validProposal(d) {
+      return d.keys().hasOnly(['uid', 'kind', 'source', 'key', 'reason', 'createdAt', 'status', 'place', 'trip'])
+        && d.source == 'personal-os'
+        && d.status == 'pending'
+        && d.createdAt is int
+        && optString(d, 'key', 200) && optString(d, 'reason', 300)
+        && ((d.kind == 'place' && !('trip' in d) && validPlace(d.place))
+         || (d.kind == 'trip' && !('place' in d) && validTrip(d.trip)));
     }
 
     // Shares: 唯讀分享快照。知道連結（文件 ID）就能讀，但不能列出所有分享

@@ -117,9 +117,11 @@
   - 影響檔案：xxx.html, yyy.js
   - 摘要：做了什麼
   - 原因：為什麼
+  - 技術：（用到新的技術、服務、套件、資料來源時才寫，例：「技術：MapLibre GL JS、OpenFreeMap」）
   - 待辦/已知問題：（可留空）
   ```
 - 小改允許精簡：只填「日期 + 類型 + 摘要」。
+- 「技術：」那行是給個人OS 讀的（它照各專案的 progress.md 整理用到的技術），2026-10-07 使用者要求從此都寫。
 
 ### project-index.md — 專案檔案索引（首次建立，每次改檔同步）
 - 每個檔案的用途、彼此關係、進入點。
@@ -165,10 +167,17 @@
   - `trips`：`name`、`start`、`end`、`order`、`uid`、`createdAt`
   - `shares`：唯讀分享快照（`tripName`、`tripDate`、`places[]`、`routes[]`、`owner`、`createdAt`），`share.html?id=` 以文件 ID 讀取
   - `photos`（2026-10-04 起）：`uid`、`data`（Bytes，JPEG，長邊 ≤1280、<900KB、已去除中繼資料）、`w`、`h`、`shared`（分享行程時設 true，有連結的人可讀）、`createdAt`
+  - `inbox`（2026-10-08 起，「待整理」）：個人OS 的提案。`uid`（你的）、`kind`（`place`／`trip`）、`source`（`personal-os`）、`status`（`pending`／`accepted`／`dismissed`）、`createdAt`、`key`（去重）、`reason`、`place{}` 或 `trip{}`、`decidedAt`。格式與規則見 `docs/personal-os.md`
 - key 設計：全部用 Firestore 自動 ID；每筆帶 `uid`，查詢一律 `where('uid','==',uid)`。
-- Rules：`places`/`routes`/`trips` 只有本人可讀寫；`shares` 知道 ID 可讀、不可列出；`photos` 本人可讀寫、`shared` 的可被讀取（只能改 `shared` 欄位）。2026-10-04 已與線上同步：**repo 的 `firestore.rules` 是唯一來源**，改完整份貼到 Console 發布。
+- Rules：`places`/`routes`/`trips` 只有本人可讀寫；`shares` 知道 ID 可讀、不可列出；`photos` 本人可讀寫、`shared` 的可被讀取（只能改 `shared` 欄位）；`inbox` 本人可讀、刪，只能改狀態；**個人OS 的助手帳號**只能讀 `places`、`trips`、`inbox` 並新增格式正確的提案（UID 寫在規則開頭）。2026-10-04 已與線上同步：**repo 的 `firestore.rules` 是唯一來源**，改完整份貼到 Console 發布。
 - 方案：Spark（免費，超額只會停用不會收費）。Firestore 免費 1 GB，照片每張約 0.2～0.4 MB。
 - 資料量：約 136 個地點（2026-10-02 截圖估算）。
+
+### 個人OS（2026-10-07 起）
+- 本專案是[個人OS](https://github.com/JP-study-list/personal-os)（私有 Obsidian 庫＋助手）的子專案，在那邊叫「**個人地圖**」。個人OS 用專用的**助手帳號**讀地點、行程，把提案丟進「待整理」，使用者在網頁上收下／丟掉；助手不能改、不能刪資料（由 Firestore 規則擋）。
+- **兩邊的約定在 `docs/personal-os.md`**：改 `places`／`trips`／`inbox` 的欄位名稱或意義、或改規則時，要同時更新該檔，並寫交接文字請使用者貼到個人OS 的對話（個人OS 的做法檔照它寫）。**這邊不寫進個人OS 的 repo。**
+- 助手帳號密碼：只在 mac 鑰匙圈 `jpmap-bot-password` 與本機 `.env`（`JPMAP_BOT_EMAIL`、`JPMAP_BOT_PASSWORD`，已在 `.gitignore`）。實測權限：`node tools/bridge-check.mjs`（`--propose` 會送一筆測試提案）。
+- API 金鑰只允許 `jp-study-list.github.io`：從網頁以外呼叫 Firebase 登入要帶 `Referer: https://jp-study-list.github.io/JPmap/`。
 
 ### 部署
 - repo：`JP-study-list/JPmap`；GitHub Pages = `main` 分支根目錄；網址 https://jp-study-list.github.io/JPmap/ 。**push 上 main 即上線，無 staging。**

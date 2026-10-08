@@ -1,8 +1,26 @@
 # progress.md — 開發歷史（最新在上）
 
+## 2026-10-08（個人OS 的橋：助手帳號＋待整理）
+- 類型：新增
+- 影響檔案：firestore.rules, js/app.js, index.html, css/style.css, sw.js, docs/personal-os.md（新增）, tools/bridge-check.mjs（新增）, .gitignore（新增）, CLAUDE.md, project-index.md
+- 摘要：
+  - 本專案成為個人OS 的子專案「個人地圖」。個人OS 用專用的助手帳號：只能讀地點、行程、待整理，並把提案（地點／行程）丟進新的 `inbox`；不能改、不能刪資料，格式不對的提案會被規則擋。
+  - 網頁新增「待整理」：有提案時側欄標題列出現收件匣按鈕和紅色數字（側欄收起時數字在展開鈕上）。每筆可「收下」（打開已填好的新增地點／行程表單，存檔後才算數）、「丟掉」（6 秒內可復原）、地點可「在地圖上看」（臨時圖釘＋同樣兩個按鈕）。規則還沒發布時讀不到待整理，網頁照常運作。
+  - 兩邊的約定寫在 `docs/personal-os.md`（登入方式、欄位、提案格式、去重用的 `key`）；`tools/bridge-check.mjs` 用助手帳號連正式資料庫實測權限。
+  - 復原提示列移到面板上層（原本在待整理面板開著時會被半透明底蓋住、按不到）。
+  - 進度紀錄改成每筆多一行「技術：」，並補上 10/4、10/7 的幾筆。
+- 原因：使用者要讓個人OS 操作這個專案（2026-10-07 定：A 方案助手帳號、寫入一律先進待整理、五種用法都要、「去過了」兩邊都算）。
+- 技術：Firestore 規則限制第二個帳號的權限、Firebase Auth／Firestore REST API（給個人OS 用，不需要套件）
+- 驗證：Playwright + 假 Firebase 待整理 27/27（紅色數字只算未處理的、收下地點／行程與取消、無關的新行程不會誤收、即時出現新提案、丟掉與復原、地圖預覽、規則未發布時、手機）；回歸：介面 51/51、電車 33/33、建築物 6/6。助手帳號的權限要等規則發布後用 `bridge-check.mjs` 實測。
+- 待辦/已知問題：
+  - 使用者：建立助手帳號（或同意由 Claude 用 REST 建立）、提供自己的 UID、發布規則。
+  - 規則發布後：跑 `bridge-check.mjs`、送一筆測試提案請使用者在手機上收下／丟掉。
+  - 都通過後寫個人OS 的交接文字（腳本、做法檔、專案檔「個人地圖」）。
+
 ## 2026-10-07（電車路線沿鐵路畫，仿 Google 地圖）
 - 類型：新增
 - 影響檔案：js/rail.js（新增）, data/rail/（新增，鐵路資料）, tools/build-rail.mjs（新增）, js/app.js, index.html, share.html, css/style.css, sw.js, CLAUDE.md, project-index.md
+- 技術：station_database 鐵路資料（CC BY-SA 4.0）、Node 離線整理腳本（`tools/build-rail.mjs`）
 - 摘要：
   - 路線規劃選「電車」後改成打站名（邊打邊搜，繁中寫法如 澀谷／橫濱／武藏小杉、假名都找得到；可加「經過」車站；點地圖或左側地點會取最近的車站）。
   - 「規劃」列出最多 3 種搭法：每段用線路代表色的標籤（如 `JY › JC`）、換車次數、站數、距離；選中的展開各段「哪條線、哪站到哪站」，地圖上用線路顏色預覽。
@@ -27,6 +45,7 @@
 ## 2026-10-04（介面依 Apple 設計原則改版）
 - 類型：重構（介面）
 - 影響檔案：css/style.css（改寫）, js/gestures.js（新增）, js/app.js, index.html, share.html, sw.js, CLAUDE.md, project-index.md
+- 技術：CSS `@starting-style`＋`transition-behavior: allow-discrete`（進出動畫）、`linear()` 彈簧曲線、`backdrop-filter` 毛玻璃、觸控事件手勢（自製 `gestures.js`）
 - 摘要：
   - 外觀：浮在地圖上的元件改成半透明毛玻璃；按鈕改成填色、沒有框線；兩個切換改成分段樣式；清單選取改成圓角色塊，分類標籤移到每列右側；字放大（手機清單 16px、表單 17px）；設定改成彩色圖示方塊。
   - 動畫：彈窗、卡片、搜尋結果、復原提示都有出現和消失的動畫，從哪裡出現就回哪裡去，動作平穩不彈跳。手機上彈窗改成從底部滑上來的卡片，側欄改成從左側滑出（打開時地圖變暗，點暗處收起）。
@@ -42,6 +61,7 @@
 ## 2026-10-04（階段 1b 照片改存 Firestore）
 - 類型：新增
 - 影響檔案：js/photos.js（新增）, js/app.js, share.html, index.html, css/style.css, sw.js, firestore.rules, CLAUDE.md, project-index.md
+- 技術：Firestore Bytes 存圖、Canvas 縮圖重新編碼（順便去除 EXIF）
 - 摘要：地點表單改成「＋ 加照片」（相簿或拍照，最多 5 張），選好即縮到長邊 1280、去除拍攝地點等中繼資料，儲存時以 Bytes 存進 Firestore `photos`，地點記 `fs:<id>`；舊網址照片照常顯示。資訊卡、全螢幕看圖、分享頁都能顯示 Firestore 照片；分享行程時把該行程照片設為 shared。刪除地點後 6 秒（復原時間）才刪照片。設定加「搬移舊照片」一鍵把舊網址照片搬進 Firestore（下載不了的保留原網址）。`firestore.rules` 與線上同步並加入 photos、收緊 shares（不可列出、create 需 owner）。順手修正備份匯出漏掉行程 id（還原時地點會脫離行程）。
 - 原因：照片放在公開 repo，37 張中大多數含 GPS 位置；使用者確認是 Spark 方案（免費、不會被收費）。
 - 驗證：Playwright + 假 Firebase：照片 21/21（2.7MB → 243KB、直式方向正確、無 EXIF、移除後刪除、取消不上傳、壞檔提示、復原保留、過時刪除、分享、搬移、分享頁顯示）；地圖 12/12、登入 9/9 回歸通過。真實 Firestore 規則尚未實測。
@@ -57,6 +77,7 @@
 ## 2026-10-04（登入只出現一次）
 - 類型：修正
 - 影響檔案：index.html, js/app.js, css/style.css
+- 技術：Firebase Auth 寄送重設密碼信（`sendPasswordResetEmail`）
 - 摘要：開啟時先顯示「載入中」，等 Firebase 還原登入狀態；已登入直接進地圖，不再閃登入畫面，只有真的沒登入才顯示登入頁。載入超過 10 秒顯示「請檢查網路」。登入頁加「忘記密碼？」（寄 Firebase 重設信，帳號與資料不變）。從主畫面 App 開啟時提示用 Email／密碼登入。
 - 原因：使用者覺得登入麻煩、不想要帳號，但登入是資料唯一的保護（repo 公開、Firebase 設定在程式碼裡），所以改成「每台裝置登入一次就記住」。使用者也忘了密碼。
 - 驗證：Playwright + 假 Firebase 測已登入（全程不出現登入頁）、未登入、忘記密碼、主畫面提示、載入逾時，9/9 通過；地圖測試 12/12 通過。
@@ -65,6 +86,7 @@
 ## 2026-10-04
 - 類型：重構（階段 1a 換地圖）
 - 影響檔案：js/map.js（新增）, js/app.js, js/config.js, index.html, share.html, css/style.css, sw.js, README.md, CLAUDE.md, project-index.md
+- 技術：MapLibre GL JS 5.24.0、OpenFreeMap 底圖、Nominatim（OSM 搜尋）、OSRM（FOSSGIS 公共伺服器）
 - 摘要：Google Maps 全面換成 MapLibre GL JS 5.24.0 + OpenFreeMap 底圖（彩色／淡色可在設定切換，地名顯示日文，淡色版補上店家圖示）。標記改為地圖圖層（叢集、依縮放調整大小、選取放大照舊），路線、預覽、替代路線、手繪都改成 GeoJSON 圖層。頂部搜尋改 Nominatim（按 Enter 才搜），點底圖店家顯示店名與類型，路線模式點地圖改用 Nominatim 反查。算路線改 OSRM（開車可選替代路線、走路），電車直接手繪，找不到路線時可改手繪。`share.html` 一併換掉。移除 Google Maps 與 MarkerClusterer 的載入。
 - 原因：Google Maps 試用期結束、地圖失效；使用者選擇免費方案（2026-10-04 確認：先換地圖再做照片、地名用日文、底圖做成可切換、分享頁之後要顯示照片）。
 - 驗證：在本機用 Playwright + 假 Firebase（不連正式資料）實測地圖顯示、標記／叢集／路線點擊、滑鼠提示、底圖切換、搜尋、點店家、新增地點、開車替代路線、走路路線、電車手繪、餐廳模式、隱藏路線、快速新增網址、手機版、分享頁。

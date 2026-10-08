@@ -6,7 +6,7 @@
 
 | 檔案 | 用途 | 關係 |
 |---|---|---|
-| `index.html` | 主頁面：SVG 圖示 sprite、登入／註冊畫面、側欄、地圖區、所有彈窗（新增地點、路線資料、行程、統計、設定〔含底圖切換〕、匯入） | 載入 `css/style.css`、MapLibre GL JS 5.24.0（jsdelivr，`defer`）、`js/app.js`（module）；註冊 `sw.js` |
+| `index.html` | 主頁面：SVG 圖示 sprite、登入／註冊畫面、側欄、地圖區、所有彈窗（新增地點、路線資料、行程、統計、設定〔含底圖切換〕、匯入、待整理） | 載入 `css/style.css`、MapLibre GL JS 5.24.0（jsdelivr，`defer`）、`js/app.js`（module）；註冊 `sw.js` |
 | `js/app.js` | 主程式（約 2700 行）：Firebase 初始化、登入、地圖、Firestore 訂閱、清單渲染、行程、表單、統計、匯出入、分享 | import `config.js`、`helpers.js`、`map.js`、`photos.js`、`gestures.js`、`rail.js`；HTML 透過 `window.xxx` 全域函式呼叫 |
 | `js/map.js` | 地圖底圖與免費地理服務：OpenFreeMap 底圖（彩色 liberty／淡色 positron，標籤改日文、淡色版補上店家圖示圖層）、Nominatim 搜尋／反查（每秒 1 次佇列）、OSRM 算路線（開車／走路）、距離時間格式化 | 被 `app.js`、`share.html` 引用；不依賴其他模組 |
 | `js/rail.js` | 電車路線：站名搜尋（繁中／簡中寫法、假名都找得到）、找最多 3 種搭法（依粗估時間，沒有時刻表）、組沿鐵軌的線形（`legs` 對應 `points` 索引）、地圖分段顏色與換車站白點（`legFeatures`）、線路標籤 HTML | 被 `app.js`、`share.html` 引用；第一次用到才下載 `data/rail/` |
@@ -18,9 +18,12 @@
 | `js/helpers.js` | 純函式：`esc`、`placeIcon`、`placeColor`、`routeColor`、`byOrder`、`fmtDate`、`localToday`、`stripUndefined` | 被 `app.js` 引用 |
 | `css/style.css` | 主頁面全部樣式：開頭是色彩／材質／彈簧曲線的變數（`:root`）；浮在地圖上的元件為毛玻璃；滑鼠效果集中在 `@media (hover: hover)`；進出動畫（`.hidden` 搭配 `@starting-style`）；`max-width: 640px` 手機版（側欄變滑出抽屜＋變暗遮罩、卡片與彈窗變底部卡片）；最後是減少動態／降低透明度／增強對比 | `index.html` |
 | `share.html` | 唯讀分享頁：以 `?id=` 讀 `shares/{id}`，用 MapLibre 畫地點與路線（電車分段顏色），含照片輪播（含 Firestore 照片）、Google Maps 導航連結；地點卡為可往下拖關閉的底部卡片 | 自帶 Firebase 設定、config 副本與樣式（設計變數與 `css/style.css` 同一套）；底圖從 `js/map.js`、照片從 `js/photos.js`、手勢從 `js/gestures.js`、電車分段從 `js/rail.js` 載入 |
-| `sw.js` | Service Worker：殼層 network-first、`/photos/` cache-first；快取名 `jpmap-v5`（改檔時要手動升版）；`data/rail/` 走 network-first，用過的站離線也能用 | `index.html` 註冊 |
+| `sw.js` | Service Worker：殼層 network-first、`/photos/` cache-first；快取名 `jpmap-v6`（改檔時要手動升版）；`data/rail/` 走 network-first，用過的站離線也能用 | `index.html` 註冊 |
 | `manifest.json` | PWA 設定（名稱「日本旅遊地圖」、圖示） | `index.html` |
-| `firestore.rules` | Firestore 規則（2026-10-04 起與線上同步，為唯一來源） | 整份貼到 Console 發布 |
+| `firestore.rules` | Firestore 規則（2026-10-04 起與線上同步，為唯一來源）；開頭有個人OS 助手帳號與你的 UID | 整份貼到 Console 發布 |
+| `docs/personal-os.md` | 個人OS ↔ 個人地圖的約定：助手帳號能做什麼、REST 怎麼連、讀得到的欄位、提案（`inbox`）格式 | 改 `places`／`trips`／`inbox` 欄位或規則時同步更新，並交接給個人OS |
+| `tools/bridge-check.mjs` | 用助手帳號連正式 Firestore，實測該擋的都擋住（`--propose` 送一筆測試提案） | 讀 `.env`、`firestore.rules`、`js/config.js` |
+| `.gitignore` | 只擋 `.env`（助手帳號密碼，本機測試用） | — |
 | `photos/` | 舊捷徑上傳的地點照片（約 35 張，多數含 GPS）＋說明 README | `places.photos[]` 以網址引用；用「設定 → 搬移舊照片」搬到 Firestore 後再決定是否刪除 |
 | `apple-touch-icon.png`、`icon-512.png`、`favicon.png` | 圖示 | `index.html`、`manifest.json` |
 | `README.md` | 舊的部署說明（GitHub Pages、Firebase、Google Maps 金鑰限制） | — |
@@ -41,7 +44,7 @@
 11. 拖曳排序（行程、地點、路線）
 12. 行程 CRUD、行程日期區間下拉
 13. 新增／編輯地點表單（圖示、顏色、評分、選照片〔縮圖、儲存時上傳〕、貼 Google Maps 網址帶入座標、美食子類型）
-14. 設定（含底圖切換，記在 localStorage `jpmap.basemap`；搬移舊照片）、餐廳模式、統計（含總里程）、JSON 匯出入
+14. 待整理（`inbox`：紅色數字、清單、收下＝打開預填表單、丟掉可復原、地圖預覽）；設定（含底圖切換，記在 localStorage `jpmap.basemap`；搬移舊照片）、餐廳模式、統計（含總里程）、JSON 匯出入
 15. 算路線（OSRM：開車可選替代路線、走路；電車：`rail.js` 站名搜尋〔邊打邊搜、可加經過車站、點地圖／清單取最近車站〕→ 選搭法 → 存 `legs`；找不到可改手繪）、手繪路線、路線資料表單（電車顯示搭乘路線、隱藏顏色）
 16. Google 時間軸匯入（舊格式）
 17. 鍵盤快捷鍵（Esc、Enter）、觸控手勢接線（`gestures.js`：哪些卡片／彈窗可拖關閉、側欄、全螢幕照片）

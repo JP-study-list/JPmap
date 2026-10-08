@@ -1,0 +1,2 @@
+# Secrets for local testing (bot password for tools/bridge-check.mjs) — never commit
+.env

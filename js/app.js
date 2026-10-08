@@ -57,8 +57,10 @@ async function ensureMarkerImages(keys) {
 
 // ── State ──
 let map, mapReady = false;       // mapReady: style loaded and overlay layers added
-let currentUser, unsubscribePlaces, unsubscribeRoutes, unsubscribeTrips;
+let currentUser, unsubscribePlaces, unsubscribeRoutes, unsubscribeTrips, unsubscribeInbox;
 let places = [], routes = [], trips = [];
+let inbox = [];                   // 待整理 proposals (all statuses; only 'pending' are shown)
+let acceptingInbox = null;        // { id, kind } while its prefilled form is open
 let mode = 'view', activeTab = 'places', currentFilter = '全部';
 let viewMode = 'all';            // 'all' (flat) | 'trips' (grouped by year)
 let selectedTripId = null;       // currently expanded/selected trip in trips view
@@ -227,6 +229,8 @@ onAuthStateChanged(auth, (user) => {
     if (unsubscribePlaces) unsubscribePlaces();
     if (unsubscribeRoutes) unsubscribeRoutes();
     if (unsubscribeTrips) unsubscribeTrips();
+    if (unsubscribeInbox) unsubscribeInbox();
+    inbox = []; renderInboxBadge();
     clearMap();
   }
 });
@@ -811,6 +815,17 @@ function subscribeData() {
     refreshTripDropdowns();
     scheduleRender();
   });
+  // 待整理: proposals from 個人OS (docs/personal-os.md). Without the inbox rules the read is
+  // denied — then there is simply no inbox.
+  const iq = query(collection(db, 'inbox'), where('uid', '==', uid));
+  unsubscribeInbox = onSnapshot(iq, (snap) => {
+    inbox = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderInboxBadge();
+    if (!document.getElementById('inbox-overlay').classList.contains('hidden')) renderInboxList();
+  }, (err) => {
+    console.warn('Inbox unavailable:', err.code || err);
+    inbox = []; renderInboxBadge();
+  });
 }
 
 async function addPlace(data) { await addDoc(collection(db, 'places'), { ...data, uid: currentUser.uid, createdAt: Date.now() }); }
@@ -1104,6 +1119,7 @@ let undoTimer = null;
 
 function queueUndo(snap) {
   if (lastDeleted) purgeDeletedPhotos(lastDeleted);  // previous undo chance is gone
+  inboxUndoId = null;
   lastDeleted = snap;
   const bar = document.getElementById('undo-bar');
   document.getElementById('undo-text').textContent = `已刪除 ${snap.places.length + snap.routes.length} 個項目`;
@@ -1122,8 +1138,20 @@ function purgeDeletedPhotos(snap) {
 function hideUndoBar() {
   document.getElementById('undo-bar').classList.add('hidden');
   lastDeleted = null;
+  inboxUndoId = null;
+}
+// The same bar undoes a dismissed 待整理 proposal
+let inboxUndoId = null;
+function queueInboxUndo(id) {
+  if (lastDeleted) { purgeDeletedPhotos(lastDeleted); lastDeleted = null; }
+  inboxUndoId = id;
+  document.getElementById('undo-text').textContent = '已丟掉 1 筆提案';
+  document.getElementById('undo-bar').classList.remove('hidden');
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(hideUndoBar, 6000);
 }
 window.undoDelete = async function() {
+  if (inboxUndoId) { const id = inboxUndoId; hideUndoBar(); await markInbox(id, 'pending'); return; }
   if (!lastDeleted) return;
   const { places: dp, routes: dr } = lastDeleted;
   hideUndoBar();
@@ -1762,6 +1790,7 @@ window.editTrip = function(id) {
 
 window.closeTripModal = function() {
   document.getElementById('trip-modal').classList.add('hidden');
+  if (acceptingInbox && acceptingInbox.kind === 'trip') acceptingInbox = null;  // cancelled → stays in 待整理
   editingTripId = null; window._editingTripId = null;
   tripModalReturnToPlace = false;
 };
@@ -1780,6 +1809,7 @@ window.saveTrip = async function() {
     const ref = await addTrip(data);
     newId = ref.id;
     selectedTripId = ref.id;  // expand the newly created trip
+    if (acceptingInbox && acceptingInbox.kind === 'trip') markInbox(acceptingInbox.id, 'accepted');
   }
   const returnToPlace = tripModalReturnToPlace;
   closeTripModal();
@@ -2024,6 +2054,7 @@ window.savePlace = async function() {
       data.lng = typeof pendingLatLng.lng === 'function' ? pendingLatLng.lng() : pendingLatLng.lng;
       await addPlace(data);
       pendingLatLng = null;
+      if (acceptingInbox && acceptingInbox.kind === 'place') markInbox(acceptingInbox.id, 'accepted');
     }
     // Photos removed while editing are deleted only after the place no longer points to them
     const stillUsed = new Set(places.flatMap(placePhotoRefs));
@@ -2041,9 +2072,136 @@ window.savePlace = async function() {
 
 window.closeModal = function() {
   document.getElementById('add-modal').classList.add('hidden');
+  if (acceptingInbox && acceptingInbox.kind === 'place') acceptingInbox = null;  // cancelled → stays in 待整理
   pendingLatLng = null; editingPlaceId = null;
   discardPendingPhotos();
 };
+
+// ══════════════════════════════════════
+// 待整理 (inbox): proposals from 個人OS (docs/personal-os.md). Nothing reaches the map until
+// the user accepts a proposal and saves the prefilled form; dismissed ones stay as a record
+// so the same proposal is not made again.
+// ══════════════════════════════════════
+const pendingInbox = () => inbox.filter(x => x.status === 'pending').sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+
+function renderInboxBadge() {
+  const n = pendingInbox().length;
+  document.getElementById('inbox-btn').classList.toggle('hidden', !n);
+  document.getElementById('inbox-count').textContent = n;
+  const rb = document.getElementById('reopen-badge');
+  rb.textContent = n;
+  rb.classList.toggle('hidden', !n);
+}
+
+const hasCoords = (p) => p && typeof p.lat === 'number' && typeof p.lng === 'number';
+function inboxItemHtml(x) {
+  const isPlace = x.kind === 'place';
+  const d = (isPlace ? x.place : x.trip) || {};
+  const sub = isPlace
+    ? [d.wishlist ? '想去' : '去過', d.date || '', d.tag || ''].filter(Boolean).join(' · ')
+    : [d.start, d.end && d.end !== d.start ? d.end : ''].filter(Boolean).join(' ～ ');
+  const id = esc(x.id);
+  return `<div class="inbox-item">
+    <div class="inbox-kind">${isPlace ? '地點' : '行程'}</div>
+    <div class="inbox-main">
+      <div class="inbox-name">${esc(d.name || '（沒有名稱）')}</div>
+      ${sub ? `<div class="inbox-sub">${esc(sub)}</div>` : ''}
+      ${x.reason ? `<div class="inbox-reason">${esc(x.reason)}</div>` : ''}
+      <div class="inbox-actions">
+        ${isPlace && hasCoords(d) ? `<button class="btn-secondary" onclick="showInboxOnMap('${id}')">在地圖上看</button>` : ''}
+        <button class="btn-secondary" onclick="dismissInbox('${id}')">丟掉</button>
+        <button class="btn-primary" onclick="acceptInbox('${id}')">收下</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderInboxList() {
+  const list = pendingInbox();
+  document.getElementById('inbox-list').innerHTML = list.length
+    ? list.map(inboxItemHtml).join('')
+    : '<div class="list-empty">沒有待整理的項目</div>';
+}
+window.openInbox = function() {
+  renderInboxList();
+  document.getElementById('inbox-overlay').classList.remove('hidden');
+};
+window.closeInbox = function() { document.getElementById('inbox-overlay').classList.add('hidden'); };
+
+async function markInbox(id, status) {
+  try { await updateDoc(doc(db, 'inbox', id), { status, decidedAt: Date.now() }); }
+  catch (err) { console.warn('Inbox update error:', err); alert('待整理更新失敗：' + (err && err.message ? err.message : err)); }
+}
+
+window.dismissInbox = async function(id) {
+  closeInboxPreview();
+  await markInbox(id, 'dismissed');
+  queueInboxUndo(id);
+};
+
+// Accept → the usual form, prefilled; the proposal is marked accepted only when the form is saved
+window.acceptInbox = function(id) {
+  const x = inbox.find(i => i.id === id);
+  if (!x) return;
+  closeInboxPreview();
+  window.closeInbox();
+  if (x.kind === 'trip') {
+    const t = x.trip || {};
+    window.openTripModal();
+    document.getElementById('tp-name').value = t.name || '';
+    document.getElementById('tp-start').value = t.start || '';
+    document.getElementById('tp-end').value = t.end || t.start || '';
+    acceptingInbox = { id, kind: 'trip' };
+    return;
+  }
+  const p = x.place || {};
+  if (!hasCoords(p)) { alert('這筆提案沒有座標，無法加到地圖'); return; }
+  pendingLatLng = { lat: p.lat, lng: p.lng };
+  editingPlaceId = null;
+  if (map) map.jumpTo({ center: [p.lng, p.lat], zoom: Math.max(map.getZoom(), 14) });
+  openAddModal(p.name || '');
+  const tagSel = document.getElementById('f-tag');
+  if (p.tag && [...tagSel.options].some(o => o.value === p.tag)) { tagSel.value = p.tag; window.onTagChange(); }
+  document.getElementById('f-wishlist').checked = !!p.wishlist;
+  applyWishlistUI(!!p.wishlist);
+  if (p.date) document.getElementById('f-date').value = p.date;
+  else if (p.wishlist) document.getElementById('f-date').value = '';
+  applyTripDateRange(p.date || '');
+  document.getElementById('f-note').value = [p.note, p.url].filter(Boolean).join('\n');
+  acceptingInbox = { id, kind: 'place' };
+};
+
+// 在地圖上看: a temporary pin with the proposal's name and the same two choices
+let inboxPreview = null;   // { marker, popup }
+window.showInboxOnMap = function(id) {
+  const x = inbox.find(i => i.id === id);
+  const p = x && x.place;
+  if (!hasCoords(p) || !map) return;
+  closeInboxPreview();
+  window.closeInbox();
+  if (sidebarOpen && window.matchMedia('(max-width: 640px)').matches) window.toggleSidebar();  // the drawer covers the map
+  const lngLat = [p.lng, p.lat];
+  const marker = new maplibregl.Marker({ color: '#185FA5' }).setLngLat(lngLat).addTo(map);
+  const popup = new maplibregl.Popup({ offset: 38, closeOnClick: false, maxWidth: '260px', className: 'inbox-popup' })
+    .setLngLat(lngLat)
+    .setHTML(`<div class="inbox-name">${esc(p.name)}</div>
+      ${x.reason ? `<div class="inbox-reason">${esc(x.reason)}</div>` : ''}
+      <div class="inbox-actions">
+        <button class="btn-secondary" onclick="dismissInbox('${esc(id)}')">丟掉</button>
+        <button class="btn-primary" onclick="acceptInbox('${esc(id)}')">收下</button>
+      </div>`)
+    .addTo(map);
+  popup.on('close', () => { if (inboxPreview && inboxPreview.popup === popup) { inboxPreview = null; marker.remove(); } });
+  inboxPreview = { marker, popup };
+  map.flyTo({ center: lngLat, zoom: Math.max(map.getZoom(), 14) });
+};
+function closeInboxPreview() {
+  if (!inboxPreview) return;
+  const { marker, popup } = inboxPreview;
+  inboxPreview = null;
+  popup.remove();
+  marker.remove();
+}
 
 // ══════════════════════════════════════
 // Settings Modal
@@ -2785,7 +2943,7 @@ document.addEventListener('keydown', (e) => {
     const overlays = [
       ['add-modal', 'closeModal'], ['trip-modal', 'closeTripModal'],
       ['route-details-modal', 'closeRouteDetailsModal'], ['stats-overlay', 'closeStats'],
-      ['settings-overlay', 'closeSettings'], ['import-overlay', 'closeImport'],
+      ['settings-overlay', 'closeSettings'], ['import-overlay', 'closeImport'], ['inbox-overlay', 'closeInbox'],
     ];
     for (const [id, fn] of overlays) {
       const el = document.getElementById(id);
@@ -2818,7 +2976,7 @@ sheet(document.getElementById('poi-card'), { onDismiss: () => window.closePoiCar
 sheet(document.getElementById('route-alt-modal'), { onDismiss: () => window.closeRouteAltModal() });
 [
   ['stats-overlay', 'closeStats'], ['settings-overlay', 'closeSettings'], ['import-overlay', 'closeImport'],
-  ['add-modal', null], ['route-details-modal', null], ['trip-modal', null],
+  ['inbox-overlay', 'closeInbox'], ['add-modal', null], ['route-details-modal', null], ['trip-modal', null],
 ].forEach(([id, close]) => {
   const overlay = document.getElementById(id);
   sheet(overlay.querySelector('.modal-box'), { backdrop: overlay, onDismiss: close && (() => window[close]()) });
