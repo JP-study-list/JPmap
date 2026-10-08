@@ -14,7 +14,7 @@
 | 新增、修改、刪除地點、行程、路線 | ❌ |
 | 修改、刪除提案 | ❌（只有你能收下／丟掉） |
 
-- 你的 UID：`OWNER_UID`；助手帳號 UID：`BOT_UID`（都寫在 `firestore.rules`，不是密碼）。
+- 你的 UID：`OWNER_UID`；助手帳號 UID：`XVJSZjgQykg6j9PI40NgU0FqMtt2`（Email `jpmap-bot@rensakobo.com`）（都寫在 `firestore.rules`，不是密碼）。
 - 助手帳號的 Email、密碼：密碼只放在 mac 鑰匙圈 `jpmap-bot-password`（帳號名稱填 Email），不進任何 git。Windows 本機測試放專案根目錄的 `.env`（已在 `.gitignore`）。
 - 停用助手：Firebase Console → Authentication → 停用那個帳號。
 

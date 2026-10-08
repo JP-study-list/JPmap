@@ -11,7 +11,7 @@ service cloud.firestore {
     // 只能讀你的地點和行程、把提案丟進「待整理」；不能改、不能刪你的任何資料。
     // UID 不是密碼，寫在這裡沒關係（密碼只在 mac 鑰匙圈）。要停用助手：在 Firebase Console 停用那個帳號。
     function ownerUid() { return 'OWNER_UID'; }   // 你的帳號
-    function isBot() { return request.auth != null && request.auth.uid == 'BOT_UID'; }   // 助手帳號
+    function isBot() { return request.auth != null && request.auth.uid == 'XVJSZjgQykg6j9PI40NgU0FqMtt2'; }   // 助手帳號
     function botReadsOwner() { return isBot() && resource.data.uid == ownerUid(); }
 
     // Places: 只有本人可以讀寫；助手只能讀
